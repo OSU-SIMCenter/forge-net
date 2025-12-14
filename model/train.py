@@ -78,16 +78,16 @@ def train_model(train_loader, test_loader, net, epochs, optimizer, device, save_
             plt.savefig(output_folder + "loss.png")
             plt.close()
     
-            # if i % 50 == 0:
-            #     test_samples, test_actions, test_deltas, test_samples_next = next(iter(test_loader))
+            if i % 50 == 0:
+                test_samples, test_actions, test_deltas, test_samples_next = next(iter(test_loader))
 
-            #     loss, test_output = test_batch(test_samples, test_actions, test_deltas, net, device)
+                loss, test_output = test_batch(test_samples, test_actions, test_deltas, net, device)
 
-            #     utils.plotPCbatch(
-            #         test_samples,
-            #         test_samples_next[:, -1, :, :],
-            #         test_output,
-            #         show=False,
-            #         save=True,
-            #         name=(output_folder + f"epoch_{i}")
-            #     )
+                utils.plotPCbatch(
+                    test_samples,
+                    test_samples_next[:, -1, :, :],
+                    test_output,
+                    show=False,
+                    save=True,
+                    name=(output_folder + f"epoch_{i}")
+                )

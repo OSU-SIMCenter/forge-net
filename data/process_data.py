@@ -127,6 +127,34 @@ def update_barycentric_points(deformed_mesh: pv.PolyData, triangle_ids: np.array
     
     return np.array(updated_points)
 
+def triangle_mask_from_window(mesh: pv.PolyData, center: float, window_length: float, bc_length: float = 0.0) -> np.ndarray:
+    '''
+    Creates a boolean mask for triangles based on their centroid's x-coordinate.
+    
+    Args:
+        mesh: PyVista PolyData mesh
+        center: Center of the window
+        window_length: Length of the window
+        bc_length: Additional boundary condition length
+    
+    Returns:
+        Boolean array of shape (n_triangles,) indicating which triangles fall in the window
+    '''
+    # Get triangle centroids
+    triangles = mesh.regular_faces
+    vertices = mesh.points
+    
+    # Calculate centroid x-coordinates for each triangle
+    triangle_centroids_x = np.mean(vertices[triangles, 0], axis=1)
+    
+    lower_bound = center - (window_length / 2 + bc_length / 2)
+    upper_bound = center + (window_length / 2 + bc_length / 2)
+    
+    bounds = [lower_bound, upper_bound]
+    
+    mask = (triangle_centroids_x >= lower_bound) & (triangle_centroids_x <= upper_bound)
+    
+    return mask, bounds
 
 def extract_data(db_path, total_points, lines):
     conn = sqlite3.connect(db_path)
@@ -141,12 +169,13 @@ def extract_data(db_path, total_points, lines):
     all_rotations = []
     series_lengths = []
     series_ids = []
+    press_width = 1.0 #hard coded press_width for press_id = 2 #TODO integrate with DBMS class to get press info on per series basis
 
     for series_id in tqdm(df['series_id'].unique(), desc="Processing series"):
         group_df = df[df['series_id'] == series_id].reset_index(drop=True)
         series_lengths.append(len(group_df) - 1)
         series_ids.append(series_id)
-
+        # return(group_df)
         # Loop over i and i+1 pairs
         for i in tqdm(range(len(group_df) - 1), desc=f"Series {series_id}", leave=False):
             row_t = group_df.loc[i]
@@ -154,28 +183,38 @@ def extract_data(db_path, total_points, lines):
 
             # Input mesh (coords from frame i)
             mesh_data_t = json.loads(row_t["result"])
+            mesh_data_tp1 = json.loads(row_tp1["result"])
+            # Get data from frame i+1
+            vertices_tp1 = mesh_data_tp1["Vertices"]
+            triangles_tp1 = mesh_data_tp1["Triangles"]
+
             vertices_t = mesh_data_t["Vertices"]
             triangles_t = mesh_data_t["Triangles"]
             tmp_mesh_t = MeshContainer.from_db(vertices_t, triangles_t)
             pv_mesh_t = meshcontainer_to_pv(tmp_mesh_t)
-            coords_t, point_triangle_ids, bary_coords = barycentric_sampling(pv_mesh_t, total_points, tri_mask=None)
+                
+            s_tp1 = np.sum(np.array(mesh_data_tp1["Steps"]))
+            p_tp1 = json.loads(row_tp1["position"])
 
-            # Get data from frame i+1
-            mesh_data_tp1 = json.loads(row_tp1["result"])
-            vertices_tp1 = mesh_data_tp1["Vertices"]
-            triangles_tp1 = mesh_data_tp1["Triangles"]
-            tmp_mesh_tp1 = MeshContainer.from_db(vertices_tp1, triangles_tp1)
-            pv_mesh_tp1 = meshcontainer_to_pv(tmp_mesh_tp1)
-            coords_tp1 = update_barycentric_points(pv_mesh_tp1, point_triangle_ids, bary_coords)
+            r_tp1 = json.loads(row_tp1["rotation"])
+
+            try:
+                tri_mask, _  = triangle_mask_from_window(pv_mesh_t, center= -p_tp1[0], window_length=press_width, bc_length=press_width)
+                coords_t, point_triangle_ids, bary_coords = barycentric_sampling(pv_mesh_t, total_points, tri_mask=tri_mask)
+
+
+                tmp_mesh_tp1 = MeshContainer.from_db(vertices_tp1, triangles_tp1)
+                pv_mesh_tp1 = meshcontainer_to_pv(tmp_mesh_tp1)
+                coords_tp1 = update_barycentric_points(pv_mesh_tp1, point_triangle_ids, bary_coords)
+            except:
+                continue
             
-            s = np.sum(np.array(mesh_data_tp1["Steps"]))
-            p = json.loads(row_tp1["position"])
-            r = json.loads(row_tp1["rotation"])
+
 
             all_points_t.append(coords_t)
-            all_points_tp1.append(coords_tp1)
-            all_steps.append(s)
-            all_positions.append(p)
-            all_rotations.append(r)
+            all_points_tp1.append(coords_tp1) 
+            all_steps.append(s_tp1) # TODO - is this correct we are appending the action of the next step ? 
+            all_positions.append(p_tp1)
+            all_rotations.append(r_tp1)
 
     return np.array(all_points_t), np.array(all_points_tp1), np.array(all_steps).reshape(-1, 1), np.array(all_positions), np.array(all_rotations), series_lengths, series_ids
