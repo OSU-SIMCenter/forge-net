@@ -25,7 +25,7 @@ class SingleStepMeshTransitionDataset(Dataset):
     def __getitem__(self, idx):
         x_t = torch.from_numpy(self.coords_t[idx]).float()
         x_tp1 = torch.from_numpy(self.coords_tp1[idx]).float()
-        delta_t = x_tp1 - x_t
+        delta_t = (x_tp1 - x_t) * 100
         a = torch.from_numpy(self.actions[idx]).float()
 
         return x_t, a.unsqueeze(0), delta_t.unsqueeze(0), x_tp1.unsqueeze(0)

@@ -5,6 +5,7 @@ import json
 import pyvista as pv
 import math
 from tqdm import tqdm
+from scipy.spatial.transform import Rotation
 
 
 class MeshContainer:
@@ -96,7 +97,6 @@ def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array 
     
     return np.array(sampled_points), np.array(global_triangle_ids), np.array(barycentric_coords)
 
-
 def update_barycentric_points(deformed_mesh: pv.PolyData, triangle_ids: np.array, barycentric_coords: np.array) -> np.array:
     '''
     Updates point positions based on deformed mesh using stored barycentric coordinates.
@@ -156,6 +156,23 @@ def triangle_mask_from_window(mesh: pv.PolyData, center: float, window_length: f
     
     return mask, bounds
 
+def normalize_points(points):
+    point_min = np.min(points, axis=0)
+    point_max = np.max(points, axis=0)
+    return( (points - point_min) / (point_max - point_min) )
+
+def transform_points(points, quaternion, translation_vector):
+    return Rotation.from_quat(quaternion).apply(points) + translation_vector
+
+def untransform_points(points, quaternion, translation_vector):
+    return Rotation.from_quat(quaternion).inv().apply(np.array(points) - np.array(translation_vector))
+
+def quat_to_eulerxyz(quaternion):
+    return Rotation.from_quat(quaternion).as_euler('xyz',degrees=True)
+
+def eulerxyz_to_quat(xyz_degtuple):
+    return Rotation.from_euler('xyz',xyz_degtuple,degrees=True).as_quat()
+
 def extract_data(db_path, total_points, lines):
     conn = sqlite3.connect(db_path)
     df = pd.read_sql_query(f"SELECT * FROM strike LIMIT {int(lines)};", conn)
@@ -199,7 +216,7 @@ def extract_data(db_path, total_points, lines):
             r_tp1 = json.loads(row_tp1["rotation"])
 
             try:
-                tri_mask, _  = triangle_mask_from_window(pv_mesh_t, center= -p_tp1[0], window_length=press_width, bc_length=press_width)
+                tri_mask, _  = triangle_mask_from_window(pv_mesh_t, center=-p_tp1[0], window_length=press_width, bc_length=3*press_width)
                 coords_t, point_triangle_ids, bary_coords = barycentric_sampling(pv_mesh_t, total_points, tri_mask=tri_mask)
 
 
@@ -209,12 +226,164 @@ def extract_data(db_path, total_points, lines):
             except:
                 continue
             
+            #Normalize point coordiantes
 
+            coords_t = untransform_points(coords_t, r_tp1, -np.array(p_tp1))
+            coords_tp1 = untransform_points(coords_tp1, r_tp1, -np.array(p_tp1))
 
             all_points_t.append(coords_t)
-            all_points_tp1.append(coords_tp1) 
+            all_points_tp1.append(coords_tp1)
             all_steps.append(s_tp1) # TODO - is this correct we are appending the action of the next step ? 
-            all_positions.append(p_tp1)
+            all_positions.append(p_tp1) 
             all_rotations.append(r_tp1)
 
-    return np.array(all_points_t), np.array(all_points_tp1), np.array(all_steps).reshape(-1, 1), np.array(all_positions), np.array(all_rotations), series_lengths, series_ids
+    return [np.array(all_points_t), 
+            np.array(all_points_tp1), 
+            np.array(all_steps).reshape(-1, 1), 
+            np.array(all_positions), 
+            np.array(all_rotations), 
+            series_lengths, 
+            series_ids]
+
+from multiprocessing import Pool, cpu_count
+import sqlite3
+import pandas as pd
+import numpy as np
+import json
+from tqdm import tqdm
+
+def process_single_series(args):
+    """Process a single series - this will run in parallel"""
+    series_id, group_df, total_points, press_width = args
+    
+    series_points_t = []
+    series_points_tp1 = []
+    series_steps = []
+    series_positions = []
+    series_rotations = []
+    
+    for i in range(len(group_df) - 1):
+        row_t = group_df.iloc[i]
+        row_tp1 = group_df.iloc[i + 1]
+        
+        # Input mesh (coords from frame i)
+        mesh_data_t = json.loads(row_t["result"])
+        mesh_data_tp1 = json.loads(row_tp1["result"])
+        
+        vertices_tp1 = mesh_data_tp1["Vertices"]
+        triangles_tp1 = mesh_data_tp1["Triangles"]
+        vertices_t = mesh_data_t["Vertices"]
+        triangles_t = mesh_data_t["Triangles"]
+        
+        tmp_mesh_t = MeshContainer.from_db(vertices_t, triangles_t)
+        pv_mesh_t = meshcontainer_to_pv(tmp_mesh_t)
+        
+        s_tp1 = np.sum(np.array(mesh_data_tp1["Steps"]))
+        p_tp1 = json.loads(row_tp1["position"])
+        r_tp1 = json.loads(row_tp1["rotation"])
+        
+        try:
+            tri_mask, _ = triangle_mask_from_window(
+                pv_mesh_t, center = -p_tp1[0], 
+                window_length=press_width, 
+                bc_length=3*press_width
+            )
+            coords_t, point_triangle_ids, bary_coords = barycentric_sampling(
+                pv_mesh_t, total_points, tri_mask=tri_mask
+            )
+            
+            tmp_mesh_tp1 = MeshContainer.from_db(vertices_tp1, triangles_tp1)
+            pv_mesh_tp1 = meshcontainer_to_pv(tmp_mesh_tp1)
+
+            coords_tp1 = update_barycentric_points(pv_mesh_tp1, point_triangle_ids, bary_coords)
+        except:
+            continue
+        
+        # Normalize point coordinates
+        coords_t = untransform_points(coords_t, r_tp1, -np.array(p_tp1))
+        coords_tp1 = untransform_points(coords_tp1, r_tp1, -np.array(p_tp1))
+
+        
+        series_points_t.append(coords_t)
+        series_points_tp1.append(coords_tp1)
+        series_steps.append(s_tp1)
+        series_positions.append(p_tp1)
+        series_rotations.append(r_tp1)
+    
+    return {
+        'series_id': series_id,
+        'points_t': series_points_t,
+        'points_tp1': series_points_tp1,
+        'steps': series_steps,
+        'positions': series_positions,
+        'rotations': series_rotations,
+        'length': len(series_points_t)
+    }
+
+
+def n_extract_data(db_path, total_points, lines, n_workers=None):
+    """
+    Extract data with parallel processing
+    
+    Args:
+        db_path: Path to database
+        total_points: Number of points to sample
+        lines: Number of lines to read from DB
+        n_workers: Number of parallel workers (None = use all CPUs)
+    """
+    # Read data from database
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql_query(f"SELECT * FROM strike LIMIT {int(lines)};", conn)
+    conn.close()
+    
+    # Prepare arguments for each series
+    press_width = 1.0
+    series_ids = df['series_id'].unique()
+    
+    args_list = [
+        (series_id, df[df['series_id'] == series_id].reset_index(drop=True), total_points, press_width)
+        for series_id in series_ids
+    ]
+    
+    # Process in parallel
+    if n_workers is None:
+        n_workers = cpu_count()
+    
+    print(f"Processing {len(series_ids)} series using {n_workers} workers...")
+    
+    with Pool(n_workers) as pool:
+        results = list(tqdm(
+            pool.imap(process_single_series, args_list),
+            total=len(args_list),
+            desc="Processing series"
+        ))
+    
+    # Combine results
+    all_points_t = []
+    all_points_tp1 = []
+    all_steps = []
+    all_positions = []
+    all_rotations = []
+    series_lengths = []
+    series_ids_out = []
+    
+    for result in results:
+        if result['length'] > 0:  # Only add series that produced data
+            all_points_t.extend(result['points_t'])
+            all_points_tp1.extend(result['points_tp1'])
+            all_steps.extend(result['steps'])
+            all_positions.extend(result['positions'])
+            all_rotations.extend(result['rotations'])
+            series_lengths.append(result['length'])
+            series_ids_out.append(result['series_id'])
+    
+    return [
+        np.array(all_points_t),
+        np.array(all_points_tp1),
+        np.array(all_steps).reshape(-1, 1),
+        np.array(all_positions),
+        np.array(all_rotations),
+        series_lengths,
+        series_ids_out
+    ]
+

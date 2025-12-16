@@ -1,8 +1,20 @@
 import time
 import utils
 import matplotlib.pyplot as plt
+
 import torch
+import torch.nn.functional as F
+
 from pytorch3d.loss import chamfer_distance
+
+def l1_penalty(net):
+
+    l1_loss = 0.0
+    for param in net.parameters():
+        l1_loss += torch.sum(torch.abs(param))
+    
+    return(l1_loss)
+
 
 
 def train_epoch(train_loader, net, optimizer, device):
@@ -17,8 +29,17 @@ def train_epoch(train_loader, net, optimizer, device):
         delta_t = delta_t.to(device) # [B, 1, N, 3]
         delta_pred = net(x_t_perm, a[:, 0, :]) # [B, N, 3]
         delta_gt = delta_t[:, 0, :, :] # [B, N, 3]
-        loss, _ = chamfer_distance(delta_gt, delta_pred)
+        magnitude_gt = torch.norm(delta_gt, dim=-1, keepdim=True)
+        weight = 1.0 + magnitude_gt
+        direction_loss = (1 - F.cosine_similarity(delta_pred, delta_gt, dim=-1)).mean()
+        mse_loss = torch.mean(weight * (delta_pred - delta_gt) ** 2)
+        loss = mse_loss +  0.5 * direction_loss
+        
+        # loss, _ = chamfer_distance(delta_gt, delta_pred)
+        # loss = torch.mean((delta_pred - delta_gt) ** 2)
+        # loss += 1e-6*l1_penalty(net)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
         optimizer.step()
         epoch_loss += loss.item()
 
@@ -34,7 +55,17 @@ def test_batch(x_t, a, delta_t, net, device):
         x_t_perm = x_t.permute(0, 2, 1)
         delta_pred = net(x_t_perm, a[:, 0, :])
         delta_gt = delta_t[:, 0, :, :]
-        loss, _ = chamfer_distance(delta_gt, delta_pred)
+        
+        magnitude_gt = torch.norm(delta_gt, dim=-1, keepdim=True)
+        weight = 1.0 + magnitude_gt
+        direction_loss = (1 - F.cosine_similarity(delta_pred, delta_gt, dim=-1)).mean()
+        mse_loss = torch.mean(weight * (delta_pred - delta_gt) ** 2)
+        loss = mse_loss +  0.5 * direction_loss
+        
+        # loss, _ = chamfer_distance(delta_gt, delta_pred)
+        # loss = torch.mean((delta_pred - delta_gt) ** 2)
+        # loss += 1e-6*l1_penalty(net)
+
         x_tp1_pred = x_t + delta_pred
     return loss.item(), x_tp1_pred.cpu()
 
@@ -86,7 +117,7 @@ def train_model(train_loader, test_loader, net, epochs, optimizer, device, save_
                 utils.plotPCbatch(
                     test_samples,
                     test_samples_next[:, -1, :, :],
-                    test_output,
+                    test_output / 100,
                     show=False,
                     save=True,
                     name=(output_folder + f"epoch_{i}")
