@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from train import train_epoch, test_epoch, test_batch
 import utils
 
+
+
 class TrainingWrapper:
     """Wrapper to add modern training features to existing train_model function"""
     
@@ -91,11 +93,7 @@ class TrainingWrapper:
         # Clip learning rate
         for param_group in self.scheduler.optimizer.param_groups:
             param_group['lr'] = max(param_group['lr'], MIN_LEARNING_RATE)
-    
-    def apply_gradient_clipping(self, net):
-        """Apply gradient clipping"""
-        if self.gradient_clip > 0:
-            torch.nn.utils.clip_grad_norm_(net.parameters(), self.gradient_clip)
+
     
     def close(self):
         self.writer.close()
@@ -131,7 +129,6 @@ def enhanced_train_model(train_loader, test_loader, net, epochs, optimizer, devi
         
         train_loss = train_epoch(train_loader, net, optimizer, device)
         train_loss_list.append(train_loss)
-        
         test_loss = test_epoch(test_loader, net, device)
         test_loss_list.append(test_loss)
         
@@ -192,7 +189,6 @@ def enhanced_train_model(train_loader, test_loader, net, epochs, optimizer, devi
     
     return train_loss_list, test_loss_list
 
-
 def load_checkpoint(checkpoint_path, net, optimizer=None, scheduler=None, device='cuda'):
     """
     Load a saved checkpoint and optionally restore optimizer/scheduler state
@@ -252,7 +248,6 @@ def load_checkpoint(checkpoint_path, net, optimizer=None, scheduler=None, device
     
     return start_epoch, train_loss, test_loss
 
-
 def load_training_history(history_path):
     """
     Load previous training history to continue plotting
@@ -280,20 +275,20 @@ if __name__ == "__main__":
     # ============================================================================
     # HYPERPARAMETERS
     # ============================================================================
-    batch_size = 256
+    batch_size = 1024
     output_folder = "./output_cogging/"
     save_results = True
     use_GPU = True
     latent_size = 512
-    dropout = 0.3
-    epochs = 1_000
+    dropout = 0.1
+    epochs = 300
 
     # Training hyperparameters (based on PointNet best practices)
-    BASE_LEARNING_RATE = 5e-3
-    MIN_LEARNING_RATE = 1e-6
-    LR_DECAY_RATE = 0.7
+    BASE_LEARNING_RATE = 1e-3
+    MIN_LEARNING_RATE = 1e-5
+    LR_DECAY_RATE = 0.1
     LR_DECAY_STEP = 20
-    WEIGHT_DECAY = 1e-4
+    WEIGHT_DECAY = 1e-2
     GRADIENT_CLIP = 1.0
 
     # Early stopping
@@ -334,6 +329,7 @@ if __name__ == "__main__":
     point_size = c_t.shape[1]
 
     print(f"\nInitializing model with point_size={point_size}, latent_size={latent_size}")
+    
     # net = model.PCTransitionModel(point_size, latent_size)
 
     net = model.ImprovedPCTransitionModel(
@@ -371,10 +367,16 @@ if __name__ == "__main__":
         weight_decay=WEIGHT_DECAY
     )
 
-    scheduler = optim.lr_scheduler.StepLR(
-        optimizer,
-        step_size=LR_DECAY_STEP,
-        gamma=LR_DECAY_RATE
+    # scheduler = optim.lr_scheduler.StepLR(
+    #     optimizer,
+    #     step_size=LR_DECAY_STEP,
+    #     gamma=LR_DECAY_RATE
+    # )
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    optimizer,
+    T_0=100,          # Epochs in first cycle
+    T_mult=1,        # Multiply cycle length after restart (1 = same length)
+    eta_min=MIN_LEARNING_RATE     # Minimum learning rate
     )
     # ============================================================================
     # CONFIGURATION - SET RESUME OPTIONS HERE

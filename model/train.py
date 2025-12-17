@@ -15,6 +15,56 @@ def l1_penalty(net):
     
     return(l1_loss)
 
+def get_point_importance_weights(coords_t, delta_gt, action):
+    """
+    Assign importance weights to each point based on domain knowledge
+    
+    Returns:
+        weights: [B, N, 1] - importance weight for each point
+    """
+    B, N, _ = coords_t.shape
+    weights = torch.ones(B, N, 1, device=coords_t.device)
+    
+    motion_magnitude = torch.norm(delta_gt, dim=-1, keepdim=True)  # [B, N, 1]
+    
+    # Option A: Linear weighting
+    weights = 1.0 + motion_magnitude  # Base weight 1.0, plus motion magnitude
+    mean_delta = delta_gt.mean(dim=1, keepdim=True)  # [B, 1, 3]
+    deviation = torch.norm(delta_gt - mean_delta, dim=-1, keepdim=True)  # [B, N, 1]
+    weights = 1.0 + 5.0 * deviation  # Higher weight for points that deviate
+    motion_magnitude = torch.norm(delta_gt, dim=-1, keepdim=True)
+    mean_delta = delta_gt.mean(dim=1, keepdim=True)
+    deviation = torch.norm(delta_gt - mean_delta, dim=-1, keepdim=True)
+    
+    # Normalize to [0, 1]
+    motion_weight = motion_magnitude / (motion_magnitude.max(dim=1, keepdim=True)[0] + 1e-8)
+    deviation_weight = deviation / (deviation.max(dim=1, keepdim=True)[0] + 1e-8)
+    
+    # Combine: care about both large motion AND different motion
+    weights = 1.0 + 5.0 * motion_weight + 10.0 * deviation_weight
+    
+    return weights
+
+
+def weighted_loss(delta_pred, delta_gt, coords_t, action):
+    """Loss that emphasizes important points"""
+    
+    # Get importance weights
+    weights = get_point_importance_weights(coords_t, delta_gt, action)  # [B, N, 1]
+    
+    # Weighted MSE
+    squared_error = (delta_pred - delta_gt) ** 2  # [B, N, 3]
+    weighted_mse = (weights * squared_error).mean()
+    
+    # Weighted direction loss (only for moving points)
+    motion_mask = (torch.norm(delta_gt, dim=-1) > 1e-3).float()  # [B, N]
+    cos_sim = F.cosine_similarity(delta_pred, delta_gt, dim=-1)  # [B, N]
+    direction_error = (1 - cos_sim) * motion_mask * weights.squeeze(-1)  # [B, N]
+    weighted_direction = direction_error.sum() / (motion_mask.sum() + 1e-8)
+    
+    total_loss = weighted_mse + 2.0 * weighted_direction
+    
+    return total_loss
 
 
 def train_epoch(train_loader, net, optimizer, device):
@@ -30,18 +80,22 @@ def train_epoch(train_loader, net, optimizer, device):
         delta_pred = net(x_t_perm, a[:, 0, :]) # [B, N, 3]
         delta_gt = delta_t[:, 0, :, :] # [B, N, 3]
         magnitude_gt = torch.norm(delta_gt, dim=-1, keepdim=True)
-        weight = 1.0 + magnitude_gt
-        direction_loss = (1 - F.cosine_similarity(delta_pred, delta_gt, dim=-1)).mean()
-        mse_loss = torch.mean(weight * (delta_pred - delta_gt) ** 2)
-        loss = mse_loss +  0.5 * direction_loss
-        
+        # mse_loss = torch.mean(magnitude_gt * (delta_pred - delta_gt) ** 2)/ (torch.mean(magnitude_gt * delta_gt ** 2) + 1e-8)
+        # mse_loss = 0
+        # direction_loss = (1 - F.cosine_similarity(delta_pred, delta_gt, dim=-1)).mean()
+        # loss = mse_loss +  2 * direction_loss
+        # loss = weighted_loss(delta_pred, delta_gt, x_t, a)
         # loss, _ = chamfer_distance(delta_gt, delta_pred)
-        # loss = torch.mean((delta_pred - delta_gt) ** 2)
+        loss = torch.mean((delta_pred - delta_gt) ** 2)
         # loss += 1e-6*l1_penalty(net)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
+        # torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
+        # torch.nn.util.clip_grad_value_(net.parameters(), clip_value=0.1)
         optimizer.step()
         epoch_loss += loss.item()
+
+    # print(magnitude_gt.shape, mse_loss, direction_loss)
+
 
     return epoch_loss/(i+1)
 
@@ -56,17 +110,18 @@ def test_batch(x_t, a, delta_t, net, device):
         delta_pred = net(x_t_perm, a[:, 0, :])
         delta_gt = delta_t[:, 0, :, :]
         
-        magnitude_gt = torch.norm(delta_gt, dim=-1, keepdim=True)
-        weight = 1.0 + magnitude_gt
-        direction_loss = (1 - F.cosine_similarity(delta_pred, delta_gt, dim=-1)).mean()
-        mse_loss = torch.mean(weight * (delta_pred - delta_gt) ** 2)
-        loss = mse_loss +  0.5 * direction_loss
-        
+        # magnitude_gt = torch.norm(delta_gt, dim=-1, keepdim=True)
+        # weight = 1.0 + magnitude_gt
+        # mse_loss = torch.mean(weight * (delta_pred - delta_gt) ** 2)/ (torch.mean(weight * delta_gt ** 2) + 1e-8)
+        # direction_loss = (1 - F.cosine_similarity(delta_pred, delta_gt, dim=-1)).mean()
+        # mse_loss = 0
+        # loss = mse_loss + 2 * direction_loss
+        # loss = weighted_loss(delta_pred, delta_gt, x_t, a)
         # loss, _ = chamfer_distance(delta_gt, delta_pred)
-        # loss = torch.mean((delta_pred - delta_gt) ** 2)
+        loss = torch.mean((delta_pred - delta_gt) ** 2)
         # loss += 1e-6*l1_penalty(net)
-
         x_tp1_pred = x_t + delta_pred
+
     return loss.item(), x_tp1_pred.cpu()
 
 
