@@ -26,7 +26,7 @@ class PCTransitionModel(nn.Module):
         # self.bn5 = nn.BatchNorm1d(128)
         # self.bn6 = nn.BatchNorm1d(self.latent_size)
 
-        self.act_fc1 = nn.Linear(1, 64)
+        self.act_fc1 = nn.Linear(3, 64)
         self.act_fc2 = nn.Linear(64, 128)
         self.act_fc3 = nn.Linear(128, self.latent_size)
         
@@ -119,7 +119,7 @@ class ImprovedPCTransitionModel(nn.Module):
         # ACTION ENCODER (4-layer with Residuals)
         # ====================================================================
         # Layer 1: 1 -> 64
-        self.act_fc1 = nn.Linear(1, 64)
+        self.act_fc1 = nn.Linear(3, 64)
         self.act_bn1 = nn.BatchNorm1d(64)
         
         # Residual Block 1: 64 -> 64

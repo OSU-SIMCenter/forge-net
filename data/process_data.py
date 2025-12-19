@@ -196,17 +196,23 @@ def process_single_series(args, compute_bc_mask=False, compute_spatial_features=
     for i in range(len(group_df) - 1):
         row_t = group_df.iloc[i]
         row_tp1 = group_df.iloc[i + 1]
-        
+
         # Input mesh (coords from frame i)
         mesh_data_t = json.loads(row_t["result"])
-        mesh_data_tp1 = json.loads(row_tp1["result"])
-        vertices_tp1 = mesh_data_tp1["Vertices"]
-        triangles_tp1 = mesh_data_tp1["Triangles"]
-        vertices_t = mesh_data_t["Vertices"]
+        num_steps_t = len(mesh_data_t["Steps"])
+        vertices_t = np.array(mesh_data_t["Vertices"]).reshape(num_steps_t,-1)[-1]
+        # vertices_t = mesh_data_t["Vertices"]
         triangles_t = mesh_data_t["Triangles"]
-        
         tmp_mesh_t = MeshContainer.from_db(vertices_t, triangles_t)
         pv_mesh_t = meshcontainer_to_pv(tmp_mesh_t)
+
+        mesh_data_tp1 = json.loads(row_tp1["result"])
+        num_steps_tp1 = len(mesh_data_tp1["Steps"])
+        vertices_tp1 = np.array(mesh_data_tp1["Vertices"]).reshape(num_steps_tp1,-1)[-1]
+        # print(mesh_data_tp1, len(mesh_data_tp1))
+        # print(mesh_data_tp1["Vertices"], len(mesh_data_tp1["Vertices"]))
+        # vertices_tp1 = mesh_data_tp1["Vertices"]
+        triangles_tp1 = mesh_data_tp1["Triangles"]
         tmp_mesh_tp1 = MeshContainer.from_db(vertices_tp1, triangles_tp1)
         pv_mesh_tp1 = meshcontainer_to_pv(tmp_mesh_tp1)
         
@@ -214,22 +220,20 @@ def process_single_series(args, compute_bc_mask=False, compute_spatial_features=
         p_tp1 = json.loads(row_tp1["position"])
         r_tp1 = json.loads(row_tp1["rotation"])
         
-        # Normalize point coordinates
-        # pv_mesh_t.points = untransform_points(np.array(pv_mesh_t.points), [0,0,0,0], -np.array(p_tp1))
-        # pv_mesh_tp1.points = untransform_points(np.array(pv_mesh_tp1.points), [0,0,0,0], -np.array(p_tp1))
-        # pv_mesh_t.points = transform_points(np.array(pv_mesh_t.points), r_tp1, np.array(p_tp1))
-        # pv_mesh_tp1.points = transform_points(np.array(pv_mesh_tp1.points), r_tp1, np.array(p_tp1))
-        # pv_mesh_t.points += np.array(p_tp1)
-        # pv_mesh_tp1.points += np.array(p_tp1)        
+  
+    
+        pv_mesh_t.points = transform_points(np.array(pv_mesh_t.points), np.array(r_tp1), np.array(p_tp1))
+        pv_mesh_tp1.points = transform_points(np.array(pv_mesh_tp1.points), np.array(r_tp1), np.array(p_tp1))
+
 
         try:
-            tri_mask, _ = triangle_mask_from_window(
-                pv_mesh_t, center = 0.0, 
-                window_length=press_width, 
-                bc_length=3*press_width
-            )
+            # tri_mask, _ = triangle_mask_from_window(
+            #     pv_mesh_t, center = 0.0, 
+            #     window_length=press_width, 
+            #     bc_length=3*press_width
+            # )
             coords_t, point_triangle_ids, bary_coords = barycentric_sampling(
-                pv_mesh_t, total_points, tri_mask=tri_mask
+                pv_mesh_t, total_points, tri_mask=None
             )
             
             coords_tp1 = update_barycentric_points(pv_mesh_tp1, point_triangle_ids, bary_coords)
@@ -278,8 +282,8 @@ def process_single_series(args, compute_bc_mask=False, compute_spatial_features=
             series_contact_directions.append(contact_directions)
         
         
-        series_points_t.append(coords_t)
-        series_points_tp1.append(coords_tp1)
+        series_points_t.append(np.array(pv_mesh_t.points))
+        series_points_tp1.append(np.array(pv_mesh_tp1.points))
         series_steps.append(s_tp1)
         series_positions.append(p_tp1)
         series_rotations.append(r_tp1)
@@ -344,7 +348,6 @@ def extract_data(db_path, total_points, lines):
             triangles_t = mesh_data_t["Triangles"]
             tmp_mesh_t = MeshContainer.from_db(vertices_t, triangles_t)
             pv_mesh_t = meshcontainer_to_pv(tmp_mesh_t)
-                
             s_tp1 = np.sum(np.array(mesh_data_tp1["Steps"]))
             p_tp1 = json.loads(row_tp1["position"])
 
@@ -480,3 +483,42 @@ def n_extract_data(db_path, total_points, lines, n_workers=None,
     
     return output
 
+if __name__ == "__main__":
+    db_path = '/local/scratch/groves/jax-forgeRL/jax-forge/data/tianhong_data/noisy_cogging.db'
+    lines = 100
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql_query(f"SELECT * FROM strike LIMIT {int(lines)};", conn)
+
+    conn.close()
+
+    all_points_t = []
+    all_points_tp1 = []
+    all_steps = []
+    all_positions = []
+    all_rotations = []
+    series_lengths = []
+    series_ids = []
+    press_width = 1.0 #hard coded press_width for press_id = 2 #TODO integrate with DBMS class to get press info on per series basis
+
+    for series_id in tqdm(df['series_id'].unique(), desc="Processing series"):
+        group_df = df[df['series_id'] == series_id].reset_index(drop=True)
+        series_lengths.append(len(group_df) - 1)
+        series_ids.append(series_id)
+        # return(group_df)
+        # Loop over i and i+1 pairs
+        for i in tqdm(range(len(group_df) - 1), desc=f"Series {series_id}", leave=False):
+            row_t = group_df.loc[i]
+            row_tp1 = group_df.loc[i + 1]
+
+            # Input mesh (coords from frame i)
+            mesh_data_t = json.loads(row_t["result"])
+            mesh_data_tp1 = json.loads(row_tp1["result"])
+            # Get data from frame i+1
+            vertices_tp1 = mesh_data_tp1["Vertices"]
+            triangles_tp1 = mesh_data_tp1["Triangles"]
+
+            vertices_t = mesh_data_t["Vertices"]
+            triangles_t = mesh_data_t["Triangles"]
+            tmp_mesh_t = MeshContainer.from_db(vertices_t, triangles_t)
+            pv_mesh_t = meshcontainer_to_pv(tmp_mesh_t)
+            break

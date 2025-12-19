@@ -45,12 +45,13 @@ class TrainingWrapper:
         """Call this at the end of each epoch"""
         
         # Log to tensorboard
-        current_lr = self.scheduler.optimizer.param_groups[0]['lr']
+        current_lr = self.scheduler.get_last_lr()
+        print(current_lr)
         self.writer.add_scalar('Loss/train', train_loss, epoch)
         self.writer.add_scalar('Loss/test', test_loss, epoch)
-        self.writer.add_scalar('Learning_Rate', current_lr, epoch)
+        self.writer.add_scalar('Learning_Rate', current_lr[0], epoch)
         
-        print(f"  LR: {current_lr:.6f}")
+        print(f"  LR: {current_lr[0]:.6f}")
         
         # Save best model
         if test_loss < self.best_loss:
@@ -88,7 +89,7 @@ class TrainingWrapper:
                 print(f"  Best epoch: {self.early_stop_best_epoch} with test_loss: {self.early_stop_best_loss:.6f}")
         
         # Update learning rate
-        self.scheduler.step()
+        self.scheduler.step(test_loss)
         
         # Clip learning rate
         for param_group in self.scheduler.optimizer.param_groups:
@@ -275,19 +276,19 @@ if __name__ == "__main__":
     # ============================================================================
     # HYPERPARAMETERS
     # ============================================================================
-    batch_size = 1024
+    batch_size = 256
     output_folder = "./output_cogging/"
     save_results = True
     use_GPU = True
     latent_size = 512
     dropout = 0.1
-    epochs = 300
+    epochs = 500
 
     # Training hyperparameters (based on PointNet best practices)
     BASE_LEARNING_RATE = 1e-3
-    MIN_LEARNING_RATE = 1e-5
-    LR_DECAY_RATE = 0.1
-    LR_DECAY_STEP = 20
+    MIN_LEARNING_RATE = 1e-4
+    LR_DECAY_RATE = 1e-3 / 1000
+    LR_DECAY_STEP = 1
     WEIGHT_DECAY = 1e-2
     GRADIENT_CLIP = 1.0
 
@@ -305,7 +306,7 @@ if __name__ == "__main__":
     # DATA LOADING
     # ============================================================================
     print("Loading data...")
-    data = np.load('/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/test_comb_FOR_large_512.npz')
+    data = np.load('/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/test_comb_FOR_large_512_p_degx.npz')
     c_t = data['coords_t']
     c_tp1 = data['coords_tp1']
     steps = data['steps']
@@ -314,13 +315,21 @@ if __name__ == "__main__":
 
     # Choose action representation
     # actions = np.hstack((steps, positions, rotations))  # Full 8D action
-    actions = steps  # 1D action
+    actions = np.hstack((steps, rotations))  # 2D action - steps and deg_about_x axis
+    actions = np.hstack((steps, positions[:,0].reshape(-1,1), rotations)) # 3D action - steps and pos_x and deg_about_x
 
     print(f"Data shapes:")
     print(f"  coords_t: {c_t.shape}")
     print(f"  coords_tp1: {c_tp1.shape}")
     print(f"  actions: {actions.shape}")
 
+
+    train_loader, test_loader = GetSingleStepDataLoaders(
+    coords_t=c_t,       
+    coords_tp1=c_tp1,
+    actions=actions,
+    batch_size=batch_size
+    )
 
     # ============================================================================
     # MODEL SETUP
@@ -367,30 +376,13 @@ if __name__ == "__main__":
         weight_decay=WEIGHT_DECAY
     )
 
-    # scheduler = optim.lr_scheduler.StepLR(
-    #     optimizer,
-    #     step_size=LR_DECAY_STEP,
-    #     gamma=LR_DECAY_RATE
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min")
+    # scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    # optimizer,
+    # T_0=100,          # Epochs in first cycle
+    # T_mult=1,        # Multiply cycle length after restart (1 = same length)
+    # eta_min=MIN_LEARNING_RATE     # Minimum learning rate
     # )
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-    optimizer,
-    T_0=100,          # Epochs in first cycle
-    T_mult=1,        # Multiply cycle length after restart (1 = same length)
-    eta_min=MIN_LEARNING_RATE     # Minimum learning rate
-    )
-    # ============================================================================
-    # CONFIGURATION - SET RESUME OPTIONS HERE
-    # ============================================================================
-    RESUME_TRAINING = True  # Set to True to resume from checkpoint
-    RESUME_CHECKPOINT = "./output_cogging/best_model.pth"  # Path to checkpoint
-    ADDITIONAL_EPOCHS = 100  # How many more epochs to train
-
-    train_loader, test_loader = GetSingleStepDataLoaders(
-        coords_t=c_t,       
-        coords_tp1=c_tp1,
-        actions=actions,
-        batch_size=batch_size
-    )
 
     # Initialize wrapper
     training_wrapper = TrainingWrapper(
@@ -400,6 +392,15 @@ if __name__ == "__main__":
         min_delta=MIN_DELTA,
         gradient_clip=GRADIENT_CLIP
     )
+
+
+    # ============================================================================
+    # CONFIGURATION - SET RESUME OPTIONS HERE
+    # ============================================================================
+    RESUME_TRAINING = False  # Set to True to resume from checkpoint
+    RESUME_CHECKPOINT = "./output_cogging/best_model.pth"  # Path to checkpoint
+    ADDITIONAL_EPOCHS = 100  # How many more epochs to train
+
 
     # Train from scratch
     print(f"Train batches: {len(train_loader)}, Test batches: {len(test_loader)}")

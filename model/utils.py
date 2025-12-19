@@ -182,7 +182,7 @@ def visualize_point_diff(pc1, pc2, point_size=5):
     plotter.show_axes()
     plotter.show()
 
-def visualize_vector_diff(mesh, pc1, pc2, min_magnitude=2.0):
+def visualize_vector_diff(pc1, pc2, mesh1=None, mesh2=None, min_magnitude=2.0):
     plotter = pv.Plotter(shape=(1, 3), window_size=(2000,1000))  # 1 row, 3 columns
     
     start = pc1
@@ -204,32 +204,41 @@ def visualize_vector_diff(mesh, pc1, pc2, min_magnitude=2.0):
     plotter.add_arrows(start, display_direction, mag=mag, color="blue")
     plotter.show_axes()
     plotter.view_xy()  # Look down Z axis
-    plotter.camera.zoom(1.2)
+    plotter.camera.zoom(1.0)
     plotter.show_grid()
     plotter.add_text("Top View (Z)", font_size=10)
-    plotter.add_mesh(mesh, opacity=0.5)
+    if mesh1 is not None:
+        plotter.add_mesh(mesh1, opacity=0.3, color='green')
+    if mesh2 is not None:
+        plotter.add_mesh(mesh2, opacity=0.3, color='red')
     
     # View 2: Looking down X (side view)
     plotter.subplot(0, 1)
     plotter.add_arrows(start, display_direction, mag=mag, color="blue")
     plotter.show_axes()
     plotter.view_yz()  # Look down X axis
-    plotter.camera.zoom(1.2)
+    plotter.camera.zoom(1.3)
     plotter.show_grid()
     plotter.add_text("Side View (X)", font_size=10)
-    plotter.add_mesh(mesh, opacity=0.5)
+    if mesh1 is not None:
+        plotter.add_mesh(mesh1, opacity=0.3, color='green')
+    if mesh2 is not None:
+        plotter.add_mesh(mesh2, opacity=0.3, color='red')
 
 
-    
     # View 3: Looking down Y (front view)
     plotter.subplot(0, 2)
     plotter.add_arrows(start, display_direction, mag=mag, color="blue")
     plotter.show_axes()
     plotter.view_xz()  # Look down Y axis
-    plotter.camera.zoom(1.2)
+    plotter.camera.zoom(1.0)
     plotter.show_grid()
     plotter.add_text("Front View (Y)", font_size=10)
-    plotter.add_mesh(mesh, opacity=0.5)
+    if mesh1 is not None:
+        plotter.add_mesh(mesh1, opacity=0.3, color='green')
+    if mesh2 is not None:
+        plotter.add_mesh(mesh2, opacity=0.3, color='red')
+    
     plotter.show()
 
 def compare_vector_fields(x_t, x_tp1, x_hat, point_size=5):
