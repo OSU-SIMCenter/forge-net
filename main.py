@@ -1,79 +1,92 @@
+import os
 import numpy as np
-import pyvista as pv
-from process_data import extract_data
-pv.start_xvfb()
-pv.set_jupyter_backend('static')
-from scipy.spatial.transform import Rotation
+import yaml
+from data.dataloaders import * 
+from data.process_data import * 
+from model.trainer import Trainer
+from model.eval import evaluate
 
-import numpy as np
-import torch
-import torch.optim as optim
-from dataloaders import GetSingleStepDataLoaders
-import model
-from train import train_model
+def make_dataset(config):
+    '''
+    Processes a SQLite database into a numpy npz which is compatible with pytorch dataloaders
+    '''
+    total_points, compute_spatial_features, compute_bc_mask, data_out = config['datasets'].values()
+    if os.path.exists(data_out):
+        print("Datasets already exists skipping creation")
+        return
+    
+    db_path1, db_path2, lines = config['databases'].values()
+    print(db_path1, db_path2)
+    assert os.path.exists(db_path1) and os.path.exists(db_path2), "Provided database paths do not exist check paths"
+    
+    data1 = n_extract_data(db_path1, total_points, lines, 
+                        compute_bc_mask=compute_bc_mask, compute_spatial_features=compute_spatial_features, n_workers=64)
+    data2 = n_extract_data(db_path2, total_points, lines, compute_bc_mask=compute_bc_mask, compute_spatial_features=compute_spatial_features, n_workers=64)
+
+    data = {}
+    for key in data1.keys():
+        if key in ['series_lengths', 'series_ids', 'meshes', 'meshes_tp1']:
+            data[key] = data1[key] + data2[key]
+        else:
+            data[key] = np.vstack((data1[key], data2[key]))
+    
+    c_t = data['coords_t']
+    c_tp1 = data['coords_tp1']
+    s = data['steps']
+    p = data['positions']
+    r = data['rotations']
+    if compute_bc_mask:
+        bc_masks = data['bc_masks']
+    if compute_spatial_features:
+        distances = data['distances_to_bc_edge']
+        contact_dirs = data['contact_directions']
 
 
-total_points = 2048
-lines = 10_000
-db_path1 = '/local/scratch/groves/jax-forgeRL/jax-forge/data/tianhong_data/noisy_cogging.db'
-db_path2 = '/local/scratch/groves/jax-forgeRL/jax-forge/data/tianhong_data/RL_random_cogging.db'
-c_t1, c_tp11, s1, p1, r1, series_lengths1, series_ids1 = extract_data(db_path1, total_points, lines)
-c_t2, c_tp12, s2, p2, r2, series_lengths2, series_ids2 = extract_data(db_path2, total_points, lines)
+    series_lengths = data['series_lengths'] 
+    series_ids = data['series_ids']
+    np.savez(data_out, coords_t=c_t, coords_tp1=c_tp1, steps=s, positions=p, rotations=r, series_lengths=np.array(series_lengths))
+    
+def make_dataloaders(config):
+    data_path = config["datasets"]["data_out"]
+    data = np.load(data_path)
+    c_t = data['coords_t']
+    c_tp1 = data['coords_tp1']
+    
+    action_features = config["network"]["action_features"]
+    steps = data['steps']
+    positions = data['positions']
+    rotations = data['rotations']
 
-c_t = np.vstack((c_t1, c_t2))
-c_tp1 = np.vstack((c_tp11, c_tp12))
-s = np.vstack((s1, s2))
-p = np.vstack((p1, p2))
-r = np.vstack((r1,r2))
-series_lengths = series_lengths1 + series_lengths2
-series_ids = series_ids1 + series_ids2
+    # Define all possible features
+    feature_map = {
+        "steps": lambda: steps,
+        "positions": lambda: positions[:, 0].reshape(-1, 1),
+        "rotations": lambda: rotations
+    }
 
-# group_df = extract_data(db_path, total_points, lines)
+    # Build only what's needed (lambdas avoid computing unused features)
+    actions = np.hstack([feature_map[f]() for f in action_features])
+ 
+    train_loader, test_loader = GetSingleStepDataLoaders(
+        coords_t=c_t,       
+        coords_tp1=c_tp1,
+        actions=actions,
+        batch_size=config["network"]["batch_size"]
+        )
+    
+    return(train_loader, test_loader)
 
-# group_df.head()
+if __name__ == "__main__":
 
-np.savez('./test_comb_FOR.npz', coords_t=c_t, coords_tp1=c_tp1, steps=s, positions=p, rotations=r, series_lengths=np.array(series_lengths))
+    base_path = get_project_root()
+    config_path = base_path / "configs" / "config.yml"
+    with open(config_path, 'r') as file:
+        config = yaml.safe_load(file)
 
+    make_dataset(config=config)
+    train_loader, test_loader= make_dataloaders(config)
+    trainer = Trainer(config, train_loader, test_loader)
+    trainer.train()
+    evaluate(trainer)
 
-data  = np.load('/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/test_comb_FOR.npz')
-c_t = data['coords_t']
-c_tp1 = data['coords_tp1']
-steps = data['steps']
-positions = data['positions']
-rotations = data['rotations']
-# actions = np.hstack((steps, positions, rotations))
-actions = steps
-point_size = c_t.shape[1]
-batch_size = 32
-output_folder = "./output_cogging/"
-save_results = True
-use_GPU = True
-latent_size = 256
-epochs = 200
-train_loader, test_loader = GetSingleStepDataLoaders(
-    coords_t=c_t,       
-    coords_tp1=c_tp1,
-    actions=actions,
-    batch_size=batch_size
-)
-
-net = model.PCTransitionModel(point_size, latent_size)
-batch_size = 32
-output_folder = "./output_cogging/"
-save_results = True
-use_GPU = True
-latent_size = 256
-epochs = 200
-
-if(use_GPU):
-    device = torch.device("cuda:0")
-    if torch.cuda.device_count() > 1:
-        net = torch.nn.DataParallel(net)
-else:
-    device = torch.device("cpu")
-
-net = net.to(device)
-
-optimizer = optim.Adam(net.parameters(), lr=0.0005)
-
-train_model(train_loader, test_loader, net, epochs, optimizer, device, save_results, output_folder)
+    
