@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 class PCTransitionModel(nn.Module):
-    def __init__(self, point_size, latent_size, act_dim):
+    def __init__(self, point_size, latent_size, action_dims):
         super(PCTransitionModel, self).__init__()
         
         self.latent_size = int(latent_size / 2)
@@ -26,7 +26,7 @@ class PCTransitionModel(nn.Module):
         # self.bn5 = nn.BatchNorm1d(128)
         # self.bn6 = nn.BatchNorm1d(self.latent_size)
 
-        self.act_fc1 = nn.Linear(act_dim, 64)
+        self.act_fc1 = nn.Linear(action_dims, 64)
         self.act_fc2 = nn.Linear(64, 128)
         self.act_fc3 = nn.Linear(128, self.latent_size)
         
@@ -79,7 +79,7 @@ class ResPCTransitionModel(nn.Module):
     - Strategic dropout for regularization
     - Proper weight initialization
     """
-    def __init__(self, point_size, latent_size, act_dim, dropout=0.3):
+    def __init__(self, point_size, latent_size, action_dims, dropout=0.3):
         super(ResPCTransitionModel, self).__init__()
         self.latent_size = int(latent_size / 2)
         self.point_size = point_size
@@ -119,7 +119,7 @@ class ResPCTransitionModel(nn.Module):
         # ACTION ENCODER (4-layer with Residuals)
         # ====================================================================
         # Layer 1: 1 -> 64
-        self.act_fc1 = nn.Linear(act_dim, 64)
+        self.act_fc1 = nn.Linear(action_dims, 64)
         self.act_bn1 = nn.BatchNorm1d(64)
         
         # Residual Block 1: 64 -> 64

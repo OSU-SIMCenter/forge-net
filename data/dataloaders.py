@@ -7,7 +7,7 @@ class SingleStepMeshTransitionDataset(Dataset):
         """
         coords_t:   numpy array [num_samples, N_points, 3]
         coords_tp1: numpy array [num_samples, N_points, 3]
-        actions:    numpy array [num_samples, action_dim]
+        actions:    numpy array [num_samples, action_dims]
 
         Each sample is:
             (coords_t[i], actions[i]) -> coords_tp1[i]

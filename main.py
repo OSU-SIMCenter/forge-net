@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import numpy as np
 import yaml
 from data.dataloaders import * 
@@ -11,13 +11,13 @@ def make_dataset(config):
     Processes a SQLite database into a numpy npz which is compatible with pytorch dataloaders
     '''
     total_points, compute_spatial_features, compute_bc_mask, data_out = config['datasets'].values()
-    if os.path.exists(data_out):
+    if Path(data_out).exists():
         print("Datasets already exists skipping creation")
         return
     
     db_path1, db_path2, lines = config['databases'].values()
     print(db_path1, db_path2)
-    assert os.path.exists(db_path1) and os.path.exists(db_path2), "Provided database paths do not exist check paths"
+    assert Path(db_path1).exists() and Path(db_path2).exists(), "Provided database paths do not exist check paths"
     
     data1 = n_extract_data(db_path1, total_points, lines, 
                         compute_bc_mask=compute_bc_mask, compute_spatial_features=compute_spatial_features, n_workers=64)
@@ -82,11 +82,16 @@ if __name__ == "__main__":
     config_path = base_path / "configs" / "config.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
+    
+    run_folder = base_path / "runs" / config["run"]["run_name"]
+    
+    assert not run_folder.exists(), print("Run already exists")
+    config["run"]["run_folder"] = run_folder
 
     make_dataset(config=config)
-    train_loader, test_loader= make_dataloaders(config)
+    train_loader, test_loader = make_dataloaders(config)
     trainer = Trainer(config, train_loader, test_loader)
     trainer.train()
-    evaluate(trainer)
+    evaluate(trainer, trainer)
 
     

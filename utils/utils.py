@@ -4,8 +4,6 @@ from pathlib import Path
 import math
 from scipy.spatial.transform import Rotation
 
-
-
 class MeshContainer:
     def __init__(self, vertices, triangles):
         self.vertices = np.array(vertices).reshape(-1, 3)

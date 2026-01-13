@@ -78,7 +78,7 @@ def deltas_vs_x(pc, delta_x, delta_z, title_prefix=""):
     plt.tight_layout()
     plt.show()
 
-def compare_scatters(pc1, pc2, label_1=None, label_2=None, label_3=None):
+def compare_scatters(pc1, pc2, label_1=None, label_2=None, label_3=None, fig_path=None):
     
     fig = plt.figure(figsize=(20,8))
     
@@ -94,10 +94,12 @@ def compare_scatters(pc1, pc2, label_1=None, label_2=None, label_3=None):
     ax3.scatter(xs=pc1[:,0],ys=pc1[:,1],zs=pc1[:,2], s=1.2, color='blue')
     ax3.scatter(xs=pc2[:,0],ys=pc2[:,1],zs=pc2[:,2], s=1.2, color='red')
     ax3.set_title(label_3)
-    
-    plt.show()
+    if fig_path is not None:
+        plt.savefig(fig_path)
+    else:
+        plt.show()
 
-def compare_scatters_w_loss_cont(pc1, pc2, loss_cont, label_1=None, label_2=None):
+def compare_scatters_w_loss_cont(pc1, pc2, loss_cont, label_1=None, label_2=None, fig_path=None):
     
     fig = plt.figure(figsize=(16,8))
 
@@ -115,7 +117,10 @@ def compare_scatters_w_loss_cont(pc1, pc2, loss_cont, label_1=None, label_2=None
     plt.colorbar(scatter, cax=cbar_ax, orientation='horizontal', label='Loss')
 
     plt.tight_layout()
-    plt.show()
+    if fig_path is not None:
+        plt.savefig(fig_path)
+    else:
+        plt.show()
 
 def visualize_bc_features(pc, bc_mask, distances_to_edge, title_prefix=""):
     """
@@ -183,7 +188,7 @@ def visualize_bc_features(pc, bc_mask, distances_to_edge, title_prefix=""):
     plt.tight_layout()
     plt.show()
 
-def visualize_point_cloud(pc,a, point_size=5):
+def visualize_point_cloud(pc,a, point_size=5, fig_path=None):
     cloud = pv.PolyData(pc)
     plotter = pv.Plotter()
     plotter.add_points(cloud, point_size=point_size, color="red")
@@ -194,9 +199,12 @@ def visualize_point_cloud(pc,a, point_size=5):
     plotter.add_arrows(start, direction, mag=1.0, color="blue")
     plotter.show_axes()
     plotter.show_grid()
-    plotter.show()
+    if fig_path is not None:
+        plotter.screenshot(fig_path)
+    else:
+        plotter.show()
 
-def visualize_point_diff(pc1, pc2, point_size=5, label=None):
+def visualize_point_diff(pc1, pc2, point_size=5, label=None, fig_path=None):
     
     plotter = pv.Plotter(shape=(1, 2), window_size=(2000,1000), border=False)  # 3 row, 2 columns
     if label is not None:
@@ -239,10 +247,14 @@ def visualize_point_diff(pc1, pc2, point_size=5, label=None):
     plotter.camera.azimuth = -13
     
     plotter.show_axes()
-    
-    plotter.show()
+    if fig_path is not None:
+        plt.savefig(fig_path)
+    else:
+        plt.show()
 
-def visualize_vector_diff(pc1, pc2, mesh1=None, mesh2=None, min_magnitude=2.0):
+def visualize_vector_diff(pc1, pc2, mesh1=None, mesh2=None, 
+                            min_magnitude=2.0, fig_path=None):
+    
     plotter = pv.Plotter(shape=(1, 3), window_size=(2000,1000))  # 1 row, 3 columns
     
     start = pc1
@@ -299,9 +311,14 @@ def visualize_vector_diff(pc1, pc2, mesh1=None, mesh2=None, min_magnitude=2.0):
     if mesh2 is not None:
         plotter.add_mesh(mesh2, opacity=0.3, color='red')
     
-    plotter.show()
+    if fig_path is not None:
+        plt.savefig(fig_path)
+    else:
+        plt.show()
 
-def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat, loss_cont, mesh1=None, mesh2=None, min_magnitude=2.0):
+def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat, 
+                                      loss_cont, mesh1=None, mesh2=None, 
+                                      min_magnitude=2.0, fig_path=None):
     
     plotter = pv.Plotter(shape=(1, 2), window_size=(2000,1000))  # 1 row, 2 columns
     
@@ -371,7 +388,7 @@ def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat, loss_cont, mesh1=None, 
 
     return plotter
 
-def compare_vector_fields(x_t, x_tp1, x_hat, point_size=5, min_magnitude=2.0):
+def compare_vector_fields(x_t, x_tp1, x_hat, point_size=5, min_magnitude=2.0, fig_path=None):
     plotter = pv.Plotter(shape=(2, 2), window_size=(2000,1000))  # 3 row, 2 columns
     
     start = x_t
@@ -473,9 +490,13 @@ def compare_vector_fields(x_t, x_tp1, x_hat, point_size=5, min_magnitude=2.0):
     # plotter.camera.zoom(1.2)
     # plotter.add_text("Front View (Y)", font_size=10)
     
-    plotter.show()
+    if fig_path is not None:
+        plt.savefig(fig_path)
+    else:
+        plt.show()
+
 # Plot losses
-def plot_loss(train_loss_list, test_loss_list, output_folder=None, save_results=True):
+def plot_loss(train_loss_list, test_loss_list, write_string, output_folder=None, save_results=True):
             plt.figure(figsize=(10, 6))
             plt.plot(train_loss_list, label="Train", linewidth=2)
             plt.plot(test_loss_list, label="Test", linewidth=2)
@@ -486,9 +507,9 @@ def plot_loss(train_loss_list, test_loss_list, output_folder=None, save_results=
             plt.grid(True, alpha=0.3)
             
             if save_results:
-                with open(output_folder + "prints.txt", "a") as file: 
-                    file.write(writeString + "\n")
-                plt.savefig(output_folder + "loss_512.png", dpi=150, bbox_inches='tight')
+                with open(output_folder / "prints.txt", "a") as file: 
+                    file.write(write_string + "\n")
+                plt.savefig(output_folder  / "loss_512.png", dpi=150, bbox_inches='tight')
             plt.close()
 
 def plotPCbatch(pcArray1, pcArray2, pcArray3, show=True, save=False, name=None, fig_count=9, sizex=12, sizey=4):
@@ -523,7 +544,7 @@ def plotPCbatch(pcArray1, pcArray2, pcArray3, show=True, save=False, name=None, 
 
     # Save the figure if save is True
     if save:
-        fig.savefig(name + '.png')
+        fig.savefig(name)
         plt.close(fig)
 
     # Show the figure
