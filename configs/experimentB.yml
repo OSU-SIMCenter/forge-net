@@ -5,16 +5,15 @@ databases:
 
 datasets:
   points_per_state: 512 #number of points to sample per mesh in the database
-  use_domain_decomp: true #if uses masking to "focus" point cloud \near boundary condtion (plastic deformation domain)
-  use_spatial_features: false
-  data_out: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/datasets/test_comb_FOR_large_512.npz" #user provided path where to save the data
+  mask_points: true #if uses masking to "focus" point cloud \near boundary condtion (plastic deformation domain)
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/datasets/nosampling_data.npz" #user provided path where to save the data
 
 network:
   model_type: "resnetpointae"
   batch_size: 512
   latent_size: 512
   action_features: ["steps", "positions", "rotations"]
-  action_dims: 6 #steps: 1, positions: 1 (x-only), rotations: 4 (quaternion)
+  action_dims: 3 #steps: 1, positions: 1 (x-only), rotations: 1 (about z axis)
   gradient_clip: 1.0
   optimizer:
     base_learning_rate: 5.0e-4
@@ -29,7 +28,7 @@ network:
   use_gpu: true
 
 run:
-  run_name: "resnetpointae_act3d"
+  run_name: "experimentB_rawmesh_3d"
   save_every: 50
   run_folder: ???
   # early stopping

@@ -1,12 +1,15 @@
-import os
+from pathlib import Path
 import time
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+
 from model.model import * 
 from utils.plotting import * 
 from utils.utils import * 
-#from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
+from loss.loss import * 
+from geomloss import SamplesLoss
+from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
 
 def l1_penalty(net):
     l1_loss = 0.0
@@ -19,12 +22,12 @@ from torch.utils.tensorboard import SummaryWriter
 
 class Trainer:
    
-    def __init__(self, config, train_loader, test_loader, resume_epoch=0, resume_best_loss=None):
+    def __init__(self, config, train_loader=None, test_loader=None, resume_epoch=0, resume_best_loss=None):
         
         self.config = config
         self.train_loader = train_loader
         self.test_loader = test_loader
-        self.output_folder = self.config["run"]["run_folder"]
+        self.output_folder = Path(self.config["run"]["run_folder"])
         self.best_model_path = self.output_folder / "best_model.pth"
         
         self.train_loss_list = []
@@ -46,17 +49,21 @@ class Trainer:
         self.best_epoch = resume_epoch if resume_best_loss else 0
         
         # Tensorboard
-        self.writer = SummaryWriter(log_dir=os.path.join(self.output_folder, 'logs'))
+        self.writer = SummaryWriter(log_dir=self.output_folder / 'logs')
         
         if resume_epoch > 0:
             print(f"Resuming training wrapper from epoch {resume_epoch}")
             print(f"  Best loss so far: {self.best_loss:.6f}")
         
         self._make_network()
+        self.loss_fn = self._get_loss_fn()
     
     def _make_network(self):
   
-        point_size = self.config["datasets"]["points_per_state"]
+        sample_batch = next(iter(self.train_loader))
+        point_size = sample_batch[0].shape[1] # get the states shape
+        self.config["network"]["point_size"] = point_size #include in the output config
+
         latent_size = self.config["network"]["latent_size"]
         model_type = self.config["network"]["model_type"]
         action_dims = self.config["network"]["action_dims"] 
@@ -69,7 +76,15 @@ class Trainer:
             point_size=point_size,
             latent_size=latent_size,
             action_dims=action_dims,
-            dropout=dropout) 
+            dropout=dropout)
+                
+        elif model_type =="condresnetpointae":
+            dropout = self.config["network"]["dropout"]
+            self.net = CondResPCTransitionModel(
+            point_size=point_size,
+            latent_size=latent_size,
+            action_dims=action_dims,
+            dropout=dropout)
         
         else:
             self.net = PCTransitionModel(point_size=point_size, 
@@ -96,13 +111,25 @@ class Trainer:
             weight_decay=self.config["network"]["optimizer"]["weight_decay"]
         )
 
-        #TODO decide on final scheduler configuration
-        self.scheduler = optim.lr_scheduler.LinearLR(self.optimizer, start_factor=1.0, end_factor=0.05, total_iters=40)
+        # #TODO decide on final scheduler configuration
+        # self.scheduler = optim.lr_scheduler.LinearLR(self.optimizer, 
+        #                                              start_factor=1.0, 
+        #                                              end_factor=0.05, 
+        #                                              total_iters=40)
+    
+        warmup_epochs = 20
+        from torch.optim.lr_scheduler import CosineAnnealingLR, SequentialLR, LambdaLR, LinearLR
+        warmup = LambdaLR(self.optimizer, lambda e: (e + 1) / warmup_epochs)
+        cosine = CosineAnnealingLR(self.optimizer, T_max=90, eta_min=1e-6)
+        factor = self.config["network"]["optimizer"]["min_learning_rate"]/ \
+                    self.config["network"]["optimizer"]["base_learning_rate"]
+        total_steps = self.config["run"]["num_epochs"]
+        linear = LinearLR(self.optimizer, start_factor=1.0, end_factor=factor, total_iters=total_steps)
+        self.scheduler = SequentialLR(self.optimizer, [warmup, linear], milestones=[warmup_epochs])
 
     def load(self, model_path):
 
-        self.state_dict = torch.load(model_path, weights_only=True)
-
+        self.state_dict = torch.load(model_path, weights_only=True)["model_state_dict"]
         self.net.load_state_dict(self.state_dict)
         self.net.eval()
         return (self.state_dict)
@@ -117,7 +144,6 @@ class Trainer:
         
         print(f"  LR: {current_lr[0]:.6f}")
         
-        # Save best model
         if test_loss < self.best_loss:
             self.best_loss = test_loss
             self.best_epoch = epoch
@@ -190,7 +216,6 @@ class Trainer:
             )
             print(write_string)
             
-            # Enhanced features
             self.on_epoch_end(i, self.train_loss, self.test_loss, self.net)
             
             plot_loss(self.train_loss_list, self.test_loss_list, 
@@ -236,18 +261,9 @@ class Trainer:
             delta_t = delta_t.to(self.device) # [B, 1, N, 3]
             delta_pred = self.net(x_t_perm, a[:, 0, :]) # [B, N, 3]
             delta_gt = delta_t[:, 0, :, :] # [B, N, 3]
-            magnitude_gt = torch.norm(delta_gt, dim=-1, keepdim=True)
-            # mse_loss = torch.mean(magnitude_gt * (delta_pred - delta_gt) ** 2)/ (torch.mean(magnitude_gt * delta_gt ** 2) + 1e-8)
-            # mse_loss = 0
-            # direction_loss = (1 - F.cosine_similarity(delta_pred, delta_gt, dim=-1)).mean()
-            # loss = mse_loss +  2 * direction_loss
-            # loss = weighted_loss(delta_pred, delta_gt, x_t, a)
-            # loss, _ = chamfer_distance(delta_gt, delta_pred)
-            loss = torch.mean((delta_pred - delta_gt) ** 2)
-            # loss += 1e-6*l1_penalty(net)
+            loss = self.loss_fn(delta_pred=delta_pred, delta_gt=delta_gt)
+
             loss.backward()
-            # torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
-            # torch.nn.util.clip_grad_value_(net.parameters(), clip_value=0.1)
             self.optimizer.step()
             epoch_loss += loss.item()
 
@@ -264,16 +280,10 @@ class Trainer:
             x_t_perm = x_t.permute(0, 2, 1)
             delta_pred = self.net(x_t_perm, a[:, 0, :])
             delta_gt = delta_t[:, 0, :, :]
-            
-            # magnitude_gt = torch.norm(delta_gt, dim=-1, keepdim=True)
-            # weight = 1.0 + magnitude_gt
-            # mse_loss = torch.mean(weight * (delta_pred - delta_gt) ** 2)/ (torch.mean(weight * delta_gt ** 2) + 1e-8)
-            # direction_loss = (1 - F.cosine_similarity(delta_pred, delta_gt, dim=-1)).mean()
-            # loss = mse_loss + 2 * direction_loss
-            # loss, _ = chamfer_distance(delta_gt, delta_pred)
-            loss = torch.mean((delta_pred - delta_gt) ** 2)
+            loss = self.loss_fn(delta_pred=delta_pred, delta_gt=delta_gt)
             # loss += 1e-6*l1_penalty(net)
             x_tp1_pred = x_t + delta_pred
+
 
         return loss.item(), x_tp1_pred.cpu()
 
@@ -284,6 +294,30 @@ class Trainer:
                 loss, _ = self.test_batch(x_t, a, delta_t)
                 epoch_loss += loss
         return epoch_loss/(i+1)
+    
+    def _get_loss_fn(self):
+        
+        if self.config["network"]["loss"] == "mse":
+            print("Using MSE loss function")
+            return lambda delta_pred, delta_gt: torch.mean((delta_pred - delta_gt) ** 2)
+        
+        elif self.config["network"]["loss"] == "chamfer":
+            print("Using Chamfer discrepancy loss function")
+            return lambda delta_pred, delta_gt: chamfer_distance(delta_gt, delta_pred)[0]
+        
+        elif self.config["network"]["loss"] == "wsd": 
+            print("Using Adaptive Wasserstein Distance loss function")
+            return lambda delta_pred, delta_gt: \
+                    torch.mean(AdaptiveSlicedWasserstein(device=self.device)(delta_pred,delta_gt))
+        
+        elif self.config["network"]["loss"] == "sinkhorn":
+            print("Using sinkhorn divergence loss function")
+            wsd = SamplesLoss("sinkhorn", p=2, blur=0.05, scaling=0.9, backend="tensorized")
+            return lambda delta_pred, delta_gt: torch.mean(wsd(delta_pred, delta_gt))
+        
+        else:
+            raise ValueError(f"Unknown loss: {self.config['network']['loss']}")
+    
 
     def close(self):
         self.writer.close()

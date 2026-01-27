@@ -11,7 +11,7 @@ def clear_folder(path):
         shutil.rmtree(path)
     os.mkdir(path)
 
-def plot_network_weights(state_dict):
+def plot_network_weights(state_dict, fig_path=None):
     # Collect all weights into a single array
     all_weights = []
     for param_name, param_tensor in state_dict.items():
@@ -42,13 +42,16 @@ def plot_network_weights(state_dict):
             fontsize=10, family='monospace')
 
     plt.tight_layout()
-    plt.show()
     print(f"Histogram saved! Total parameters: {len(all_weights):,}")
     print(f"Weight statistics:")
     print(f"  Mean: {mean_val:.6f}")
     print(f"  Std: {std_val:.6f}")
     print(f"  Min: {min_val:.6f}")
     print(f"  Max: {max_val:.6f}")
+    if fig_path is not None:
+        plt.savefig(fig_path)
+    else:
+        plt.show()
 
 def deltas_vs_x(pc, delta_x, delta_z, title_prefix=""):
     """
@@ -312,19 +315,27 @@ def visualize_vector_diff(pc1, pc2, mesh1=None, mesh2=None,
         plotter.add_mesh(mesh2, opacity=0.3, color='red')
     
     if fig_path is not None:
-        plt.savefig(fig_path)
+        plotter.savefig(fig_path)
     else:
-        plt.show()
+        plotter.show()
 
 def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat, 
                                       loss_cont, mesh1=None, mesh2=None, 
-                                      min_magnitude=2.0, fig_path=None):
+                                      min_magnitude=2.0, use_nearest=None, fig_path=None):
     
     plotter = pv.Plotter(shape=(1, 2), window_size=(2000,1000))  # 1 row, 2 columns
     
     start = x_t
     direction = x_tp1 - x_t
     direction_hat = x_hat - x_t
+        # Compute direction vectors
+    if use_nearest:
+        from scipy.spatial import cKDTree
+        tree = cKDTree(x_tp1)
+        distances, indices = tree.query(x_t)
+        direction = x_tp1[indices] - x_t
+    else:
+        direction = x_tp1 - x_t
 
     points = pv.PolyData(start)
     points['vectors'] = direction
@@ -384,7 +395,11 @@ def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat,
     #     plotter.add_mesh(mesh1, opacity=0.3, color='green')
     # if mesh2 is not None:
     #     plotter.add_mesh(mesh2, opacity=0.3, color='red')
-    plotter.show()
+    if fig_path is not None:
+        plotter.off_screen = True
+        plotter.screenshot(fig_path)
+    else:
+        plotter.show()
 
     return plotter
 
@@ -491,9 +506,10 @@ def compare_vector_fields(x_t, x_tp1, x_hat, point_size=5, min_magnitude=2.0, fi
     # plotter.add_text("Front View (Y)", font_size=10)
     
     if fig_path is not None:
-        plt.savefig(fig_path)
+        plotter.off_screen = True
+        plotter.screenshot(fig_path)
     else:
-        plt.show()
+        plotter.show()
 
 # Plot losses
 def plot_loss(train_loss_list, test_loss_list, write_string, output_folder=None, save_results=True):
@@ -509,7 +525,7 @@ def plot_loss(train_loss_list, test_loss_list, write_string, output_folder=None,
             if save_results:
                 with open(output_folder / "prints.txt", "a") as file: 
                     file.write(write_string + "\n")
-                plt.savefig(output_folder  / "loss_512.png", dpi=150, bbox_inches='tight')
+                plt.savefig(output_folder  / "loss", dpi=150, bbox_inches='tight')
             plt.close()
 
 def plotPCbatch(pcArray1, pcArray2, pcArray3, show=True, save=False, name=None, fig_count=9, sizex=12, sizey=4):

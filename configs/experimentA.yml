@@ -1,0 +1,46 @@
+# Train with the full mesh and "full" action space (steps, pos_x, rot_x)
+databases:
+  db1: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/databases/noisy_cogging.db"
+  db2: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/databases/random_hits.db"
+  lines: 10_000 #number of lines in database to read
+
+datasets:
+  points_per_state: 256 #Default to the mesh vertices - don't sample (equiv to None in Python)
+  mask_points: False #if uses masking to "focus" point cloud \near boundary condtion (plastic deformation domain)
+  seed: 42
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/datasets/tmsampling_seeded_data10k.npz" #user provided path where to save the data
+
+network:
+  model_type: "condresnetpointae"
+  batch_size: 512
+  latent_size: 512
+  action_features: ["steps"] #steps only 
+  action_dims: 1 #steps: 1, positions: 1 (x-only), rotations: 1 (about x axis)
+  gradient_clip: 1.0
+  loss: "mse" #"mse" or "chamfer" or "wsd" (wasserstein-distance)
+  optimizer:
+    base_learning_rate: 5.0e-3
+    min_learning_rate: 1.0e-7
+    weight_decay: 1.0e-2
+  scheduler:
+    start_factor: 1.0
+    end_factor: 0.05
+    lr_decay_rate: 1.0e-3
+    lr_decay_step: 1.0
+  dropout: 0.1
+  use_gpu: True
+
+run:
+  run_name: "mse_256tmsamples_seeded"
+  save_every: 50
+  run_folder: ???
+  # early stopping
+  early_stop: False
+  patience: 100
+  min_delta: 1.0e-6
+  num_epochs: 500
+
+eval:
+  eval_idxs: [1, 25, 115]
+
+

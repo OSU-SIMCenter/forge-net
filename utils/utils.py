@@ -1,5 +1,6 @@
 import numpy as np
 import pyvista as pv
+import trimesh as tm
 from pathlib import Path
 import math
 from scipy.spatial.transform import Rotation
@@ -86,16 +87,16 @@ def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array 
         tri_id = point_triangle_ids[i]
         idx0, idx1, idx2 = triangles[tri_id]
         
-        v0 = points[idx0]
-        v1 = points[idx1]
-        v2 = points[idx2]
+        v0 = points[idx0] # A
+        v1 = points[idx1] # B
+        v2 = points[idx2] # C
         
         r0, r1 = point_translations[i]
         b0 = 1 - math.sqrt(r0)
         b1 = math.sqrt(r0) * (1 - r1)
         b2 = r1 * math.sqrt(r0)
         
-        point = b0 * v0 + b1 * v1 + b2 * v2
+        point = (b0 * v0) + (b1 * v1) + (b2 * v2)
         sampled_points.append(point)
         barycentric_coords.append([b0, b1, b2])
         global_triangle_ids.append(original_tri_indices[tri_id])
@@ -132,6 +133,59 @@ def update_barycentric_points(deformed_mesh: pv.PolyData, triangle_ids: np.array
     
     return np.array(updated_points)
 
+def weighted_update_barycentric_points(deformed_mesh: pv.PolyData, 
+                              original_mesh: pv.PolyData, 
+                               triangle_ids: np.array, 
+                               barycentric_coords: np.array) -> np.array:
+    '''
+    Updates point positions based on weighted vertex displacements.
+    Args:
+        deformed_mesh: Deformed mesh (t+1)
+        original_mesh: Original mesh (t) - ADDED
+        triangle_ids: (N,) triangle indices for each point
+        barycentric_coords: (N, 3) barycentric coordinates
+    Returns:
+        (N, 3) updated point positions
+    '''
+    triangles = original_mesh.regular_faces
+    vertices_t = original_mesh.points
+    vertices_tp1 = deformed_mesh.points
+    
+    updated_points = []
+    for i in range(len(triangle_ids)):
+        tri_id = triangle_ids[i]
+        idx0, idx1, idx2 = triangles[tri_id]
+        
+        # Original positions
+        v0_t = vertices_t[idx0]
+        v1_t = vertices_t[idx1]
+        v2_t = vertices_t[idx2]
+        
+        # Deformed positions
+        v0_tp1 = vertices_tp1[idx0]
+        v1_tp1 = vertices_tp1[idx1]
+        v2_tp1 = vertices_tp1[idx2]
+        
+        # Vertex displacements
+        d0 = v0_tp1 - v0_t
+        d1 = v1_tp1 - v1_t
+        d2 = v2_tp1 - v2_t
+        
+        # Original sampled point position
+        b0, b1, b2 = barycentric_coords[i]
+        point_t = b0 * v0_t + b1 * v1_t + b2 * v2_t
+        
+        # Weighted displacement
+        point_displacement = b0 * d0 + b1 * d1 + b2 * d2
+        
+        # New position
+        point_tp1 = point_t + point_displacement
+        updated_points.append(point_tp1)
+    
+    return np.array(updated_points)
+
+
+
 def triangle_mask_from_window(mesh: pv.PolyData, center: float, window_length: float, bc_length: float = 0.0) -> np.ndarray:
     '''
     Creates a boolean mask for triangles based on their centroid's x-coordinate.
@@ -160,6 +214,41 @@ def triangle_mask_from_window(mesh: pv.PolyData, center: float, window_length: f
     mask = (triangle_centroids_x >= lower_bound) & (triangle_centroids_x <= upper_bound)
     
     return mask, bounds
+
+def tm_barycentric_sampling(pv_mesh: pv.PolyData, 
+                            num_points: int, 
+                            tri_mask: np.array = None,
+                            seed: int = None) -> tuple[np.array, np.array, np.array]:
+    
+    if tri_mask is not None:
+        faces = pv_mesh.regular_faces[tri_mask]
+        original_tri_indices = np.arange(len(pv_mesh.regular_faces))[tri_mask]
+    else:
+        faces = pv_mesh.regular_faces
+        original_tri_indices = np.arange(len(pv_mesh.regular_faces))
+
+    tm_mesh = tm.Trimesh(vertices=pv_mesh.points, faces=faces)
+    points, tri_ids_local = tm.sample.sample_surface(tm_mesh, count=1000, seed=seed)
+    tri_ids_global = original_tri_indices[tri_ids_local]
+
+    bary_coords = tm.triangles.points_to_barycentric(
+                        triangles=tm_mesh.triangles[tri_ids_local],
+                        points=points)
+
+
+    return(points, tri_ids_global, bary_coords)
+
+def tm_update_barycentric_points(deformed_mesh: pv.PolyData, triangle_ids: np.array, bary_coords: np.array):
+    deformed_tm = tm.Trimesh(
+        vertices=deformed_mesh.points,
+        faces=deformed_mesh.regular_faces
+    )
+
+    updated_points = tm.triangles.barycentric_to_points(
+        triangles=deformed_tm.triangles[triangle_ids],
+        barycentric=bary_coords
+    )
+    return np.array(updated_points)
 
 def normalize_points(points):
     point_min = np.min(points, axis=0)
