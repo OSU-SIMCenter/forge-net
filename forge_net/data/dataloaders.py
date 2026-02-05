@@ -3,11 +3,12 @@ from torch.utils.data import Dataset, DataLoader, random_split
 
 
 class SingleStepMeshTransitionDataset(Dataset):
-    def __init__(self, coords_t, coords_tp1, actions):
+    def __init__(self, coords_t, coords_tp1, actions, delta_scalar=100):
         """
         coords_t:   numpy array [num_samples, N_points, 3]
         coords_tp1: numpy array [num_samples, N_points, 3]
         actions:    numpy array [num_samples, action_dims]
+        delta_scalar: int to scale the deltas by for numeric stability of gradients
 
         Each sample is:
             (coords_t[i], actions[i]) -> coords_tp1[i]
@@ -18,6 +19,7 @@ class SingleStepMeshTransitionDataset(Dataset):
         self.coords_t = coords_t
         self.coords_tp1 = coords_tp1
         self.actions = actions
+        self.delta_scalar = delta_scalar
 
     def __len__(self):
         return len(self.coords_t)
@@ -25,7 +27,7 @@ class SingleStepMeshTransitionDataset(Dataset):
     def __getitem__(self, idx):
         x_t = torch.from_numpy(self.coords_t[idx]).float()
         x_tp1 = torch.from_numpy(self.coords_tp1[idx]).float()
-        delta_t = (x_tp1 - x_t) * 100
+        delta_t = self.delta_scalar * (x_tp1 - x_t)
         a = torch.from_numpy(self.actions[idx]).float()
 
         return x_t, a.unsqueeze(0), delta_t.unsqueeze(0), x_tp1.unsqueeze(0)

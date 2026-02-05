@@ -4,12 +4,9 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-from model.model import * 
-from utils.plotting import * 
-from utils.utils import * 
-from loss.loss import * 
-from geomloss import SamplesLoss
-from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
+from forge_net.model.model import * 
+from forge_net.utils.plotting import * 
+from forge_net.utils.utils import * 
 
 def l1_penalty(net):
     l1_loss = 0.0
@@ -22,7 +19,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 class Trainer:
    
-    def __init__(self, config, train_loader=None, test_loader=None, resume_epoch=0, resume_best_loss=None):
+    def __init__(self, config, train_loader=None, test_loader=None, 
+    resume_epoch=0, resume_best_loss=None, log_to_tb=True):
         
         self.config = config
         self.train_loader = train_loader
@@ -49,7 +47,8 @@ class Trainer:
         self.best_epoch = resume_epoch if resume_best_loss else 0
         
         # Tensorboard
-        self.writer = SummaryWriter(log_dir=self.output_folder / 'logs')
+        if log_to_tb:
+            self.writer = SummaryWriter(log_dir=self.output_folder / 'logs')
         
         if resume_epoch > 0:
             print(f"Resuming training wrapper from epoch {resume_epoch}")
@@ -65,31 +64,18 @@ class Trainer:
         self.config["network"]["point_size"] = point_size #include in the output config
 
         latent_size = self.config["network"]["latent_size"]
-        model_type = self.config["network"]["model_type"]
         action_dims = self.config["network"]["action_dims"] 
-        use_gpu = self.config["network"]["use_gpu"]
+        use_gpu = self.config["network"]["use_gpu"]   
+        dropout = self.config["network"]["dropout"]
+        use_res = self.config["network"]["use_res"]
+
         print(f"\nInitializing model with point_size={point_size}, latent_size={latent_size}")
         
-        if model_type =="resnetpointae":
-            dropout = self.config["network"]["dropout"]
-            self.net = ResPCTransitionModel(
-            point_size=point_size,
-            latent_size=latent_size,
-            action_dims=action_dims,
-            dropout=dropout)
-                
-        elif model_type =="condresnetpointae":
-            dropout = self.config["network"]["dropout"]
-            self.net = CondResPCTransitionModel(
-            point_size=point_size,
-            latent_size=latent_size,
-            action_dims=action_dims,
-            dropout=dropout)
-        
-        else:
-            self.net = PCTransitionModel(point_size=point_size, 
-                                         latent_size=latent_size,
-                                         action_dims=action_dims)
+        self.net = ForgeNet(point_size=point_size,
+                            latent_size=latent_size,
+                            action_dims=action_dims,
+                            dropout=dropout,
+                            use_res=use_res)
 
         if use_gpu and torch.cuda.is_available():
             self.device = torch.device("cuda:0")
@@ -254,7 +240,6 @@ class Trainer:
         
         for i, (x_t, a, delta_t, _) in enumerate(self.train_loader):
             self.optimizer.zero_grad()
-            
             x_t = x_t.to(self.device) # [B, N, 3]
             x_t_perm = x_t.permute(0, 2, 1) # [B, 3, N]
             a = a.to(self.device) # [B, 1, A]
@@ -262,12 +247,9 @@ class Trainer:
             delta_pred = self.net(x_t_perm, a[:, 0, :]) # [B, N, 3]
             delta_gt = delta_t[:, 0, :, :] # [B, N, 3]
             loss = self.loss_fn(delta_pred=delta_pred, delta_gt=delta_gt)
-
             loss.backward()
             self.optimizer.step()
             epoch_loss += loss.item()
-
-        # print(magnitude_gt.shape, mse_loss, direction_loss)
 
         return epoch_loss/(i+1)
 
@@ -276,12 +258,10 @@ class Trainer:
             x_t = x_t.to(self.device)
             a = a.to(self.device)
             delta_t = delta_t.to(self.device)
-
             x_t_perm = x_t.permute(0, 2, 1)
             delta_pred = self.net(x_t_perm, a[:, 0, :])
             delta_gt = delta_t[:, 0, :, :]
             loss = self.loss_fn(delta_pred=delta_pred, delta_gt=delta_gt)
-            # loss += 1e-6*l1_penalty(net)
             x_tp1_pred = x_t + delta_pred
 
 
@@ -303,17 +283,14 @@ class Trainer:
         
         elif self.config["network"]["loss"] == "chamfer":
             print("Using Chamfer discrepancy loss function")
+            from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
             return lambda delta_pred, delta_gt: chamfer_distance(delta_gt, delta_pred)[0]
         
         elif self.config["network"]["loss"] == "wsd": 
             print("Using Adaptive Wasserstein Distance loss function")
+            from forge_net.loss.loss import AdaptiveSlicedWasserstein 
             return lambda delta_pred, delta_gt: \
                     torch.mean(AdaptiveSlicedWasserstein(device=self.device)(delta_pred,delta_gt))
-        
-        elif self.config["network"]["loss"] == "sinkhorn":
-            print("Using sinkhorn divergence loss function")
-            wsd = SamplesLoss("sinkhorn", p=2, blur=0.05, scaling=0.9, backend="tensorized")
-            return lambda delta_pred, delta_gt: torch.mean(wsd(delta_pred, delta_gt))
         
         else:
             raise ValueError(f"Unknown loss: {self.config['network']['loss']}")

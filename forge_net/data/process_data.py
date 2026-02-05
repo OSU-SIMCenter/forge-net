@@ -4,7 +4,7 @@ import numpy as np
 import json
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
-from utils.utils import *
+from forge_net.utils.utils import *
 
 def process_series(args):
     """Process a single series - this will run in parallel
@@ -65,11 +65,11 @@ def process_series(args):
         if total_points is not None:
             try:
 
-                coords_t, point_triangle_ids, bary_coords = tm_barycentric_sampling(
-                    pv_mesh_t, total_points, tri_mask=tri_mask, seed=seed
+                coords_t, point_triangle_ids, bary_coords = barycentric_sampling(
+                    pv_mesh_t, total_points, tri_mask=tri_mask
                 )
                 
-                coords_tp1 = tm_update_barycentric_points(pv_mesh_tp1, point_triangle_ids, bary_coords)
+                coords_tp1 = update_barycentric_points(pv_mesh_tp1, point_triangle_ids, bary_coords)
                 
             except:
                 print(f"Skipping hit in series {series_id} - no press contact")

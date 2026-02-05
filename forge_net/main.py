@@ -1,11 +1,11 @@
 from pathlib import Path
 import numpy as np
 import yaml
-from data.dataloaders import * 
-from data.process_data import * 
-from utils.utils import *
-from model.trainer import Trainer
-from eval import evaluate
+from forge_net.data.dataloaders import * 
+from forge_net.data.process_data import * 
+from forge_net.utils.utils import *
+from forge_net.model.trainer import Trainer
+from forge_net.eval import *
 
 def make_dataset(config):
     '''
@@ -75,7 +75,7 @@ def make_dataloaders(config):
 if __name__ == "__main__":
 
     base_path = get_project_root()
-    config_path = base_path / "configs" / "experimentA.yml"
+    config_path = base_path / "configs" / "experiment_unmasked.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     
@@ -93,5 +93,6 @@ if __name__ == "__main__":
     with open(run_folder / "config_out.yml", "w") as file:
         yaml.safe_dump(config, file)
     evaluate(config, trainer)
+    evaluate_series(config, trainer)
 
     
