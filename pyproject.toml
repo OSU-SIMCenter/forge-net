@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=43.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forge-net"
+version = "0.0.1"
+requires-python = ">=3.9"
+authors = [
+  {name = "Joshua Groves", email = "groves.152@osu.edu"},
+  {name = "Tianhong Tan", email = "tianhong.tan@wisc.edu"}
+]
+description = "A pointnet inspired autoencoder architecture for predicting plastic deformation in open die metal forging."
+readme = "README.md"
+license = {file = "LICENSE"}
+keywords = ["autonencoder", "GPU", "Python", "Finite element analysis", "machine learning"]
+classifiers = [
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Physics",
+  "License :: OSI Approved :: BSD License",
+  "Natural Language :: English",
+  "Programming Language :: Python :: 3"
+]
+
+[tool.setuptools]
+packages = ["forge_net"]
