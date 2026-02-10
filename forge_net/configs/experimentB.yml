@@ -1,12 +1,12 @@
 databases:
-  db1: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/databases/noisy_cogging.db"
-  db2: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/databases/random_hits.db"
+  db1: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/databases/noisy_cogging.db"
+  db2: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/databases/random_hits.db"
   lines: 10_000 #number of lines in database to read
 
 datasets:
   points_per_state: 512 #number of points to sample per mesh in the database
   mask_points: true #if uses masking to "focus" point cloud \near boundary condtion (plastic deformation domain)
-  data_out: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/datasets/nosampling_data.npz" #user provided path where to save the data
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/nosampling_data.npz" #user provided path where to save the data
 
 network:
   model_type: "resnetpointae"

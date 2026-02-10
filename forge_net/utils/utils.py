@@ -38,15 +38,36 @@ def get_datasets_path() -> Path:
 def get_models_path() -> Path:
     return(ROOT / 'model' / 'saved_models')
 
-def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array = None) -> tuple[np.array, np.array, np.array]:
+def actions_from_feature_map(action_features, data):
+    # Define all possible features
+    feature_map = {
+        "steps": lambda: data['steps'],
+        "positions": lambda: data['positions'][:, 0].reshape(-1, 1), #if positions we only care about translation in X
+        "rotations": lambda: np.array([[quat_to_eulerxyz(quat)[0]] for quat in data['rotations']]) #if rotations we only care about rotation about x
+    }
+    return np.hstack([feature_map[f]() for f in action_features])
+
+def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array = None, seed: int = None) -> tuple[np.array, np.array, np.array]:
     '''
     Returns sampled points and their barycentric information.
+    
+    Args:
+        mesh: Input mesh
+        num_points: Number of points to sample
+        tri_mask: Optional mask for triangles to sample from
+        seed: Random seed for reproducible sampling
     
     Returns:
         points: (N, 3) sampled point positions
         triangle_ids: (N,) which triangle each point belongs to (in original mesh indexing)
         barycentric_coords: (N, 3) barycentric coordinates (b0, b1, b2)
     '''
+    # Set random seed if provided
+    if seed is not None:
+        rng = np.random.RandomState(seed)
+    else:
+        rng = np.random.RandomState()
+    
     mesh = mesh.compute_cell_sizes()
     triangles = mesh.regular_faces
     triangle_areas = mesh.cell_data["Area"]
@@ -71,12 +92,12 @@ def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array 
     
     for i in range(num_triangles):
         for _ in range(math.floor(triangle_areas[i] / total_area * num_points)):
-            point_translations.append([np.random.random(), np.random.random()])
+            point_translations.append([rng.random(), rng.random()])
             point_triangle_ids.append(i)
     
     for i in range(num_points - len(point_translations)):
-        point_translations.append([np.random.random(), np.random.random()])
-        point_triangle_ids.append(np.random.randint(0, num_triangles))
+        point_translations.append([rng.random(), rng.random()])
+        point_triangle_ids.append(rng.randint(0, num_triangles))
     
     # Compute points and barycentric coordinates
     sampled_points = []
@@ -87,16 +108,18 @@ def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array 
         tri_id = point_triangle_ids[i]
         idx0, idx1, idx2 = triangles[tri_id]
         
-        v0 = points[idx0] # A
-        v1 = points[idx1] # B
-        v2 = points[idx2] # C
+        v0 = points[idx0]  # A
+        v1 = points[idx1]  # B
+        v2 = points[idx2]  # C
         
         r0, r1 = point_translations[i]
+        
         b0 = 1 - math.sqrt(r0)
         b1 = math.sqrt(r0) * (1 - r1)
         b2 = r1 * math.sqrt(r0)
         
         point = (b0 * v0) + (b1 * v1) + (b2 * v2)
+        
         sampled_points.append(point)
         barycentric_coords.append([b0, b1, b2])
         global_triangle_ids.append(original_tri_indices[tri_id])
@@ -162,40 +185,81 @@ def triangle_mask_from_window(mesh: pv.PolyData, center: float, window_length: f
     
     return mask, bounds
 
-def tm_barycentric_sampling(pv_mesh: pv.PolyData, 
-                            num_points: int, 
-                            tri_mask: np.array = None,
-                            seed: int = None) -> tuple[np.array, np.array, np.array]:
+import numpy as np
+from scipy.sparse import coo_matrix, vstack, eye
+from scipy.sparse.linalg import lsqr
+
+def get_graph_laplacian(mesh):
+    num_vertices = mesh.n_points
+    faces = mesh.regular_faces  # Shape (N, 3)
     
-    if tri_mask is not None:
-        faces = pv_mesh.regular_faces[tri_mask]
-        original_tri_indices = np.arange(len(pv_mesh.regular_faces))[tri_mask]
+    # Extract all edges from the triangles
+    # Each face (v1, v2, v3) gives 3 edges: (v1,v2), (v2,v3), (v3,v1)
+    v1 = faces[:, 0]
+    v2 = faces[:, 1]
+    v3 = faces[:, 2]
+    
+    # We want undirected edges, so we add both directions
+    rows = np.concatenate([v1, v2, v2, v3, v3, v1])
+    cols = np.concatenate([v2, v1, v3, v2, v1, v3])
+    
+    # Weight of 1 for every connected edge
+    data = np.ones_like(rows, dtype=float)
+    
+    # Create the Adjacency/Weight matrix W
+    # sum_duplicates=True (default) handles vertices shared by multiple triangles
+    W = coo_matrix((data, (rows, cols)), shape=(num_vertices, num_vertices)).tocsr()
+    
+    # Ensure the weights are binary (1 if connected, 0 if not)
+    # even if an edge is shared by multiple faces
+    W.data[:] = 1.0
+    
+    # D is the Degree matrix (diagonal)
+    # The degree is the number of neighbors for each vertex
+    degree = np.array(W.sum(axis=1)).flatten()
+    D = coo_matrix((degree, (np.arange(num_vertices), np.arange(num_vertices))), 
+                   shape=(num_vertices, num_vertices)).tocsr()
+    
+    # L = D - W
+    return D - W
+
+def invert_deltas_with_smoothness(predicted_deltas, triangle_ids, barycentric_coords, mesh, alpha=0.1, damp=1e-4):
+    num_samples = len(predicted_deltas)
+    num_vertices = mesh.n_points
+    triangles = mesh.regular_faces
+    
+    # 1. Build the Barycentric Matrix A
+    rows, cols, weights = [], [], []
+    for i in range(num_samples):
+        v_indices = triangles[triangle_ids[i]]
+        w = barycentric_coords[i]
+        for j in range(3):
+            rows.append(i)
+            cols.append(v_indices[j])
+            weights.append(w[j])
+            
+    A = coo_matrix((weights, (rows, cols)), shape=(num_samples, num_vertices)).tocsr()
+    
+    # 2. Build Laplacian L and Augment
+    if alpha > 0:
+        L = get_graph_laplacian(mesh)
+        # Combine: A_augmented = [A; sqrt(alpha) * L]
+        A_augmented = vstack([A, np.sqrt(alpha) * L])
+        # P_augmented = [P; 0]
+        padding = np.zeros((num_vertices, 3))
+        rhs_all = np.vstack([predicted_deltas, padding])
     else:
-        faces = pv_mesh.regular_faces
-        original_tri_indices = np.arange(len(pv_mesh.regular_faces))
+        A_augmented = A
+        rhs_all = predicted_deltas
 
-    tm_mesh = tm.Trimesh(vertices=pv_mesh.points, faces=faces)
-    points, tri_ids_local = tm.sample.sample_surface(tm_mesh, count=num_points, seed=seed)
-    tri_ids_global = original_tri_indices[tri_ids_local]
-
-    bary_coords = tm.triangles.points_to_barycentric(
-                        triangles=tm_mesh.triangles[tri_ids_local],
-                        points=points)
-
-
-    return(points, tri_ids_global, bary_coords)
-
-def tm_update_barycentric_points(deformed_mesh: pv.PolyData, triangle_ids: np.array, bary_coords: np.array):
-    deformed_tm = tm.Trimesh(
-        vertices=deformed_mesh.points,
-        faces=deformed_mesh.regular_faces
-    )
-
-    updated_points = tm.triangles.barycentric_to_points(
-        triangles=deformed_tm.triangles[triangle_ids],
-        barycentric=bary_coords
-    )
-    return np.array(updated_points)
+    # 3. Solve per axis
+    vertex_deltas = np.zeros((num_vertices, 3))
+    for d in range(3):
+        # rhs_all[:, d] handles X, Y, and Z independently
+        res = lsqr(A_augmented, rhs_all[:, d], damp=damp)
+        vertex_deltas[:, d] = res[0]
+        
+    return vertex_deltas
 
 def normalize_points(points):
     point_min = np.min(points, axis=0)

@@ -426,10 +426,10 @@ def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat,
         scalar_bar_args=None
     )
     
-    plotter.show_axes()
+    # plotter.show_axes()
     plotter.view_xy()  # Look down Z axis
     plotter.camera.zoom(1.0)
-    plotter.show_grid()
+    # plotter.show_grid()
     plotter.add_text("Actual Vector Field", font_size=10)
     
     plotter.subplot(0, 1)
@@ -452,10 +452,10 @@ def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat,
         scalar_bar_args={'title': 'Loss'}
     )
 
-    plotter.show_axes()
+    # plotter.show_axes()
     plotter.view_xy()  # Look down X axis
     plotter.camera.zoom(1.0)
-    plotter.show_grid()
+    # plotter.show_grid()
     plotter.add_text("Predicted Vector Field Color by Loss", font_size=10)
     # if mesh1 is not None:
     #     plotter.add_mesh(mesh1, opacity=0.3, color='green')
@@ -629,16 +629,15 @@ def plot_eval_series(gt_seq, single_preds, rec_preds, losses,
 
     for i, idx in enumerate(display_rec_indices):
         ax = fig.add_subplot(gs[0, 2 + i], projection='3d')
-        gt_idx = idx + 1
-        if gt_idx < len(gt_seq):
-             plot_pc(ax, gt_seq[gt_idx], 'grey', f"GT Step {gt_idx}")
+        if idx < len(gt_seq):
+            plot_pc(ax, gt_seq[idx], 'grey', f"GT Step {idx + 1}")
 
     # --- ROW 1: Model Predictions ---
     ax_m0 = fig.add_subplot(gs[1, 0], projection='3d')
-    plot_pc(ax_m0, gt_seq[0], 'black', "Input (Step 0)")
+    plot_pc(ax_m0, rec_preds[0], 'black', "Input (Step 0)")
 
     ax_m1 = fig.add_subplot(gs[1, 1], projection='3d')
-    plot_pc(ax_m1, single_preds[0], 'blue', "Model Pred ($\hat{x}_1$)")
+    plot_pc(ax_m1, rec_preds[1], 'blue', "Model Pred ($\hat{x}_1$)")
 
     for i, idx in enumerate(display_rec_indices):
         ax = fig.add_subplot(gs[1, 2 + i], projection='3d')
@@ -653,7 +652,7 @@ def plot_eval_series(gt_seq, single_preds, rec_preds, losses,
     truncated_rec_losses = rec_losses[:last_step_idx]
     steps = np.arange(1, len(truncated_losses) + 1)
     
-    ax_loss.plot(steps, truncated_losses, label='Single Step Error x 5000', color='blue', marker='o', markersize=4, alpha=0.4)
+    ax_loss.plot(steps, truncated_losses, label='Single Step Error', color='blue', marker='o', markersize=4, alpha=0.4)
     # ax_loss.plot(steps, truncated_dev_losses, label='Recursive Accumulation Error', color='cyan', linewidth=2, marker='x', markersize=4)
     ax_loss.plot(steps, truncated_rec_losses, label='Recursive Accumulation Error', color='red', linewidth=2, marker='x', markersize=4)
 

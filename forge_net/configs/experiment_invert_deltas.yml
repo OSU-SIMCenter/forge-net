@@ -2,13 +2,13 @@
 databases:
   db1: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/databases/noisy_cogging.db"
   db2: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/databases/random_hits.db"
-  lines: 100_000 #number of lines in database to read
+  lines: 10_000 #number of lines in database to read
 
 datasets:
   points_per_state: 1024 #Default to the mesh vertices - don't sample (equiv to None in Python)
   mask_points: False #if uses masking to "focus" point cloud \near boundary condtion (plastic deformation domain)
   seed: 42
-  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/seeded_unmasked_data100k.npz" #user provided path where to save the data
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/seeded_unmasked_data10k_tri_ids.npz" #user provided path where to save the data
 
 network:
   model_type: "forgenet"
@@ -32,7 +32,7 @@ network:
   use_gpu: True
 
 run:
-  run_name: "mse_1024_unmasked_seeded"
+  run_name: "mse_1024_unmasked_seeded_tri_ids"
   save_every: 50
   run_folder: ???
   # early stopping

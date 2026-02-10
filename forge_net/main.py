@@ -23,24 +23,9 @@ def make_dataset(config):
     
     data1 = n_extract_data(db_path1, total_points, lines, seed=seed, mask_points=mask_points, n_workers=128)
     data2 = n_extract_data(db_path2, total_points, lines, seed=seed,  mask_points=mask_points, n_workers=128)
+    data = {key: np.concatenate((data1[key], data2[key]), axis=0) for key in data1.keys()}
 
-    data = {}
-    for key in data1.keys():
-        if key in ['series_lengths', 'series_ids', 'meshes', 'meshes_tp1']:
-            data[key] = data1[key] + data2[key]
-        else:
-            data[key] = np.vstack((data1[key], data2[key]))
-    
-    c_t = data['coords_t']
-    c_tp1 = data['coords_tp1']
-    s = data['steps']
-    p = data['positions']
-    r = data['rotations']
-
-    series_lengths = data['series_lengths'] 
-    series_ids = data['series_ids']
-    np.savez(data_out, coords_t=c_t, coords_tp1=c_tp1, steps=s, positions=p, rotations=r, 
-             series_lengths=np.array(series_lengths))
+    np.savez(data_out, **data)
     
 def make_dataloaders(config):
     data_path = config["datasets"]["data_out"]
@@ -49,19 +34,8 @@ def make_dataloaders(config):
     c_tp1 = data['coords_tp1']
     
     action_features = config["network"]["action_features"]
-    steps = data['steps']
-    positions = data['positions']
-    rotations = data['rotations']
-
-    # Define all possible features
-    feature_map = {
-        "steps": lambda: steps,
-        "positions": lambda: positions[:, 0].reshape(-1, 1), #if positions we only care about translation in X
-        "rotations": lambda: np.array([[quat_to_eulerxyz(quat)[0]] for quat in rotations]) #if rotations we only care about rotation about x
-    }
-
     # Build only what's in the config
-    actions = np.hstack([feature_map[f]() for f in action_features])
+    actions = actions_from_feature_map(action_features, data)
  
     train_loader, test_loader = GetSingleStepDataLoaders(
         coords_t=c_t,       
@@ -75,12 +49,11 @@ def make_dataloaders(config):
 if __name__ == "__main__":
 
     base_path = get_project_root()
-    config_path = base_path / "configs" / "experiment_unmasked.yml"
+    config_path = base_path / "configs" / "experiment_invert_deltas.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     
     run_folder = base_path / "runs" / config["run"]["run_name"]
-    
     assert not run_folder.exists(), print("Run already exists")
     config["run"]["run_folder"] = run_folder
 

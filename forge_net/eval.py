@@ -2,6 +2,7 @@ from pathlib import Path
 import torch
 from forge_net.utils.utils import *
 from forge_net.utils.plotting import * 
+from forge_net.invert_deltas import invert_deltas_to_mesh, save_comparison_turntable
 from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
 
 def evaluate(config, trainer):
@@ -11,29 +12,15 @@ def evaluate(config, trainer):
     data  = np.load(data_path)
     states = data['coords_t']
     states_tp1 = data['coords_tp1']
-    steps = data['steps']
     action_features = config["network"]["action_features"]
-    positions = data['positions']
-    rotations = data['rotations']
-
-    # Define all possible features
-    feature_map = {
-        "steps": lambda: steps,
-        "positions": lambda: positions[:, 0].reshape(-1, 1), #if positions we only care about translation in X
-        "rotations": lambda: np.array([[quat_to_eulerxyz(quat)[0]] for quat in rotations]) #if rotations we only care about rotation about x
-    }
-
-    # Build only what's in the config
-    actions = np.hstack([feature_map[f]() for f in action_features])
+    
+    actions = actions_from_feature_map(action_features, data)
     
     output_folder = Path(config["run"]["run_folder"])
     eval_path = output_folder / "eval"
     eval_path.mkdir(exist_ok=True)
 
-
     trainer.load(model_path = output_folder / "best_model.pth")
-
-    # plot_network_weights(trainer.state_dict, fig_path=eval_path / "network_hist.png") 
     
     def forward(x,a):
         with torch.no_grad():
@@ -93,10 +80,10 @@ def evaluate(config, trainer):
                                             fig_path = idx_path / f"vector_fields_loss_{idx}.png")
 
 def evaluate_series(config, trainer):
-    
+    #NOTE: if your data is randomly seeded the losses between iterations may be higher than expected
     data_path = config["datasets"]["data_out"]
     assert os.path.exists(data_path), "Dataset found"
-    data  = np.load(data_path)
+    data  = np.load(data_path, allow_pickle=True)
     states = data['coords_t']
     states_tp1 = data['coords_tp1']
     steps = data['steps']
@@ -105,26 +92,18 @@ def evaluate_series(config, trainer):
     rotations = data['rotations']
     series_lengths = data['series_lengths']
 
-    # Define all possible features
-    feature_map = {
-        "steps": lambda: steps,
-        "positions": lambda: positions[:, 0].reshape(-1, 1), #if positions we only care about translation in X
-        "rotations": lambda: np.array([[quat_to_eulerxyz(quat)[0]] for quat in rotations]) #if rotations we only care about rotation about x
-    }
+    actions = actions_from_feature_map(action_features, data)
 
-    # Build only what's in the config
-    actions = np.hstack([feature_map[f]() for f in action_features])
     output_folder = Path(config["run"]["run_folder"])
     eval_path = output_folder / "eval"
     eval_path.mkdir(exist_ok=True)
 
-
     trainer.load(model_path = output_folder / "best_model.pth")
     
-    series_eval_idx = 0
+    series_eval_idx = 4
     series_length = series_lengths[series_eval_idx]
     series_start_idx = sum(series_lengths[:series_eval_idx])
-    series_end_idx = series_start_idx + series_lengths[series_eval_idx]
+    series_end_idx = series_start_idx + series_length - 1
     # series_id = series_ids[series_eval_idx]
     print(f"Evaluating series {series_eval_idx} out of {len(series_lengths)} with \n \
             Series length: {series_length}  \
@@ -146,50 +125,70 @@ def evaluate_series(config, trainer):
     recursive_losses = []
 
     x_recursive = torch.tensor(states[series_start_idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
-    
-    current_r = rotations[series_start_idx + 1]
-    current_p = positions[series_start_idx + 1]
-
-    for idx in range(series_start_idx, series_end_idx):
-
+    counter = 0
+    n_step = 15
+    invert_deltas = True
+    for idx in range(series_start_idx, series_end_idx+1):
         x_t_gt = torch.tensor(states[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
         x_tp1_gt = torch.tensor(states_tp1[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
         a_t = torch.tensor(actions[idx], dtype=torch.float32).unsqueeze(0).to(trainer.device)
 
         delta_hat = forward(x_t_gt, a_t)
         x_tp1_hat = x_t_gt + delta_hat.transpose(1, 2) / 100
-        delta_rec = forward(x_recursive, a_t)
-        x_recursive = x_recursive + delta_rec.transpose(1, 2) / 100
-        
-        step_loss = torch.mean((x_tp1_hat - x_tp1_gt)**2).item()*10_000
+        delta_recursive = forward(x_recursive, a_t)
+        if idx != series_start_idx:
+            x_recursive = x_recursive + delta_recursive.transpose(1, 2) / 100
+
+        step_loss = torch.mean((x_tp1_hat - x_tp1_gt)**2).item()
         dev_loss = torch.mean((x_recursive - x_tp1_hat)**2).item()
         rec_loss = torch.mean((x_recursive - x_tp1_gt)**2).item()
 
-
-        if idx + 1 < series_end_idx:
-            next_r = rotations[idx + 1]
-            next_p = positions[idx + 1]
-            
-            # Convert to numpy, transform, convert back
-            x_rec_np = x_recursive.squeeze().cpu().numpy().T
-            x_rec_world = untransform_points(x_rec_np, current_r, current_p)
-            x_rec_transformed = transform_points(x_rec_world, next_r, next_p)
-            x_recursive = torch.tensor(x_rec_transformed, dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
-
-            current_r = next_r
-            current_p = next_p
-    
-        
         gt_sequence.append(x_t_gt.squeeze().cpu().numpy().T)
         single_step_preds.append(x_tp1_hat.squeeze().cpu().numpy().T)
         recursive_preds.append(x_recursive.squeeze().cpu().numpy().T)
         losses.append(step_loss)
         dev_losses.append(dev_loss)
         recursive_losses.append(rec_loss)
-    losses[0] = losses[0] / 10_000
-    plot_eval_series(gt_sequence, single_step_preds, recursive_preds, 
-                        losses, dev_losses, recursive_losses, n_step=1, max_cols=20,
-                        fig_path=eval_path/"eval_series.png")
+
+        if idx + 1 < series_end_idx:            
+            # Convert to numpy, transform, convert back
+            x_rec_np = x_recursive.squeeze().cpu().numpy().T
+            x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
+            x_rec_transformed = transform_points(x_rec_world, rotations[idx + 1], positions[idx + 1])
+            x_recursive = torch.tensor(x_rec_transformed, dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+        
+        if invert_deltas:
+            counter += 1
+            if counter % n_step == 0:
+                mesh_data = data['meshes'][0]
+                base_mesh_pv = pv.PolyData(mesh_data['points'], mesh_data['faces'])
+                tri_ids = data['tri_ids'][idx]
+                bary_coords = data['bary_coords'][idx]
+                gt_mesh = data['meshes_tp1'][idx]
+                recovered_mesh = invert_deltas_to_mesh(
+                        base_mesh_pv, x_rec_np, tri_ids, bary_coords, alpha=0
+                    )
+                gt_mesh_pv = pv.PolyData(gt_mesh['points'], mesh_data['faces'])
+                filename = f"comparison_step_{idx}.gif"
+                save_comparison_turntable(recovered_mesh, 
+                                        gt_mesh_pv, 
+                                        eval_path /"surfaces"/filename, 
+                                        n_frames=300, 
+                                        fps=15)
+
+    plot_eval_series(gt_sequence, 
+                      single_step_preds, 
+                      recursive_preds, 
+                      losses, 
+                      dev_losses, 
+                      recursive_losses, 
+                      n_step=n_step, 
+                      max_cols=7,
+                      fig_path=eval_path/"eval_series.png")
+    
+    return recursive_preds
+
+
 
 if __name__ == "__main__":
     #Evaluate an existing trained model
@@ -198,12 +197,12 @@ if __name__ == "__main__":
     import yaml
 
     base_path = get_project_root()
-    run_name = "mse_1024_unmasked"
+    run_name = "mse_1024_unmasked_seeded_tri_ids"
     config_path = base_path / "runs" / run_name / "config_out.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     from main import make_dataloaders
     train_loader, test_loader = make_dataloaders(config)
     trainer = Trainer(config, train_loader, log_to_tb=False)
-    # evaluate(config, trainer)
+    evaluate(config, trainer)
     evaluate_series(config, trainer)
