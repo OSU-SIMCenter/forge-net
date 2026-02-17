@@ -6,14 +6,25 @@ import os
 def evaluate(config, trainer):
     
     data_path = config["datasets"]["data_out"]
-    assert os.path.exists(data_path), "Dataset found"
-    data  = np.load(data_path)
-    states = data['coords_t']
-    states_tp1 = data['coords_tp1']
-    steps = data['steps']
+    # assert os.path.exists(data_path), "Dataset found"
+    # data  = np.load(data_path)
+    # states = data['coords_t']
+    # states_tp1 = data['coords_tp1']
     action_features = config["network"]["action_features"]
-    positions = data['positions']
-    rotations = data['rotations']
+    # steps = data['steps']
+    # positions = data['positions']
+    # rotations = data['rotations']
+
+    states = np.array([[0, 0, 0], [1, 1, 1], [-1, -1, 1]])
+    states_tp1 = np.array([[0, 0, 0], [1, 1, 1], [-1, -1, 1]])
+
+    steps = np.array([1, 2, 3])
+    positions = np.array([[0, 0, 0], [1, 1, 1], [-1, -1, 1]])
+    rotations = np.array([
+        [0.0, 0.0, 0.0, 1.0],  # Quaternion 1
+        [0.707, 0.0, 0.707, 0.0],  # Quaternion 2
+        [0.0, 0.707, 0.0, 0.707]   # Quaternion 3
+    ])
 
     # Define all possible features
     feature_map = {
@@ -57,39 +68,14 @@ def evaluate(config, trainer):
         if config["network"]["loss"] == "mse":
             loss_cont = torch.sum(((delta_hat - delta_gt) ** 2),axis=0).squeeze(0).numpy()
         
-        elif config["network"]["loss"] == "chamfer" or config["network"]["loss"] == "wsd":
-            loss_cont =  chamfer_distance(delta_gt.T.unsqueeze(0), 
-                                          delta_hat.T.unsqueeze(0), 
-                                          point_reduction=None, 
-                                          batch_reduction=None)[0][0][-1]
+        # elif config["network"]["loss"] == "chamfer" or config["network"]["loss"] == "wsd":
+        #     loss_cont =  chamfer_distance(delta_gt.T.unsqueeze(0), 
+        #                                   delta_hat.T.unsqueeze(0), 
+        #                                   point_reduction=None, 
+        #                                   batch_reduction=None)[0][0][-1]
         
         else:
             raise ValueError("Loss function not found")
-
-        #Make eval plots
-        compare_scatters(pc1=x_tp1_np, pc2=x_tp1_hat, 
-                    label_1="Ground Truth Mesh Tp1", 
-                    label_2="Predicted Mesh Tp1", 
-                    label_3='G.T. vs. Predicted',
-                    fig_path= idx_path / f"compare_scatters_{idx}.png")
-        
-        compare_scatters_w_loss_cont(pc1=x_t_np, pc2=x_tp1_hat, loss_cont=loss_cont, 
-                                     fig_path=idx_path / f"compare_scatter_loss_{idx}.png")
-
-        visualize_point_diff(x_tp1_hat,x_tp1_np, point_size=5, 
-                             label="Vector Field Error \n(Predicted Deltas minus G.T. Deltas)",
-                              fig_path = idx_path / f"point_diff_{idx}.png")
-        
-        compare_vector_fields(x_t_np, x_tp1_np, x_tp1_hat, min_magnitude=8.0, 
-                              fig_path=idx_path / f"compare_vector_fields_{idx}.png")
-        
-        visualize_vector_diff_w_scale(x_t=x_t_np, x_tp1=x_tp1_np, x_hat=x_tp1_hat,
-                                        scale_factor=3.0,
-                                        fig_path = idx_path / f"vector_fields_scale_{idx}.png")
-        
-        visualize_vector_diff_w_loss_cont(x_t=x_t_np, x_tp1=x_tp1_np, x_hat=x_tp1_hat, 
-                                            loss_cont=loss_cont,
-                                            fig_path = idx_path / f"vector_fields_loss_{idx}.png")
 
 def evaluate_series(config, trainer):
     
@@ -186,9 +172,9 @@ def evaluate_series(config, trainer):
         dev_losses.append(dev_loss)
         recursive_losses.append(rec_loss)
     losses[0] = losses[0] / 10_000
-    plot_eval_series(gt_sequence, single_step_preds, recursive_preds, 
-                        losses, dev_losses, recursive_losses, n_step=1, max_cols=20,
-                        fig_path=eval_path/"eval_series.png")
+    # plot_eval_series(gt_sequence, single_step_preds, recursive_preds, 
+    #                     losses, dev_losses, recursive_losses, n_step=1, max_cols=20,
+    #                     fig_path=eval_path/"eval_series.png")
 
 if __name__ == "__main__":
     #Evaluate an existing trained model

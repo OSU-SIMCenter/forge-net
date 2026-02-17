@@ -35,7 +35,7 @@ from utils.utils import *
 import yaml
 import os
 
-from eval import evaluate_series
+from eval import evaluate
 from main import make_dataloaders
 
 
@@ -231,7 +231,7 @@ if __name__ == "__main__":
         config = yaml.safe_load(file)
     trainer = Trainer(config, log_to_tb=False)
     # evaluate(config, trainer)
-    evaluate_series(config, trainer)
+    evaluate(config, trainer)
     print("done!")
 
     asyncio.run(main())

@@ -6,7 +6,6 @@ import torch.optim as optim
 
 from forge_net.model.model import * 
 from forge_net.utils.utils import * 
-
 def l1_penalty(net):
     l1_loss = 0.0
     for param in net.parameters():
@@ -53,14 +52,20 @@ class Trainer:
             print(f"Resuming training wrapper from epoch {resume_epoch}")
             print(f"  Best loss so far: {self.best_loss:.6f}")
         
-        # self._make_network()
-        # self.loss_fn = self._get_loss_fn()
+        self._make_network()
+        self.loss_fn = self._get_loss_fn()
     
     def _make_network(self):
   
-        sample_batch = next(iter(self.train_loader))
-        point_size = sample_batch[0].shape[1] # get the states shape
-        self.config["network"]["point_size"] = point_size #include in the output config
+        if self.train_loader is not None:
+            sample_batch = next(iter(self.train_loader))
+            point_size = sample_batch[0].shape[1]  # Get the states shape
+        else:
+            point_size = self.config["network"].get("point_size", None)
+            if point_size is None:
+                raise ValueError("`point_size` must be specified in the configuration if `train_loader` is not provided.")
+
+        self.config["network"]["point_size"] = point_size  # Include in the output config
 
         latent_size = self.config["network"]["latent_size"]
         action_dims = self.config["network"]["action_dims"] 
@@ -114,7 +119,7 @@ class Trainer:
 
     def load(self, model_path):
 
-        self.state_dict = torch.load(model_path, weights_only=True)["model_state_dict"]
+        self.state_dict = torch.load(model_path, weights_only=True, map_location=torch.device('cpu'))["model_state_dict"]
         self.net.load_state_dict(self.state_dict)
         self.net.eval()
         return (self.state_dict)
