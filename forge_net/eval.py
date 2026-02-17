@@ -1,8 +1,7 @@
 from pathlib import Path
 import torch
 from forge_net.utils.utils import *
-from forge_net.utils.plotting import * 
-from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
+import os
 
 def evaluate(config, trainer):
     
@@ -207,3 +206,4 @@ if __name__ == "__main__":
     trainer = Trainer(config, train_loader, log_to_tb=False)
     # evaluate(config, trainer)
     evaluate_series(config, trainer)
+    print("done!")

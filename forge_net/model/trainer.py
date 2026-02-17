@@ -5,7 +5,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from forge_net.model.model import * 
-from forge_net.utils.plotting import * 
 from forge_net.utils.utils import * 
 
 def l1_penalty(net):
@@ -54,8 +53,8 @@ class Trainer:
             print(f"Resuming training wrapper from epoch {resume_epoch}")
             print(f"  Best loss so far: {self.best_loss:.6f}")
         
-        self._make_network()
-        self.loss_fn = self._get_loss_fn()
+        # self._make_network()
+        # self.loss_fn = self._get_loss_fn()
     
     def _make_network(self):
   

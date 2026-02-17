@@ -11,15 +11,22 @@ def make_dataset(config):
     '''
     Processes a SQLite database into a numpy npz which is compatible with pytorch dataloaders
     '''
-    total_points, mask_points, seed, data_out = config['datasets'].values()
+    ds_cfg = config['datasets']
+    total_points = ds_cfg.get('points_per_state', ds_cfg.get('total_points'))
+    mask_points = ds_cfg.get('mask_points')
+    seed = ds_cfg.get('seed')
+    data_out = ds_cfg.get('data_out')
 
-    if Path(data_out).exists():
+    if data_out is not None and Path(str(data_out)).exists():
         print("Datasets already exists skipping creation")
         return
     
-    db_path1, db_path2, lines = config['databases'].values()
+    db_cfg = config['databases']
+    db_path1 = db_cfg.get('db1')
+    db_path2 = db_cfg.get('db2')
+    lines = db_cfg.get('lines')
     print(db_path1, db_path2)
-    assert Path(db_path1).exists() and Path(db_path2).exists(), "Provided database paths do not exist check paths"
+    assert Path(str(db_path1)).exists() and Path(str(db_path2)).exists(), "Provided database paths do not exist check paths"
     
     data1 = n_extract_data(db_path1, total_points, lines, seed=seed, mask_points=mask_points, n_workers=128)
     data2 = n_extract_data(db_path2, total_points, lines, seed=seed,  mask_points=mask_points, n_workers=128)
@@ -75,7 +82,7 @@ def make_dataloaders(config):
 if __name__ == "__main__":
 
     base_path = get_project_root()
-    config_path = base_path / "configs" / "experiment_unmasked.yml"
+    config_path = base_path / "runs" / "mse_1024_unmaksed_seeded_w_tri_ids" / "config_out.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     
@@ -84,7 +91,6 @@ if __name__ == "__main__":
     assert not run_folder.exists(), print("Run already exists")
     config["run"]["run_folder"] = run_folder
 
-    make_dataset(config=config)
     train_loader, test_loader = make_dataloaders(config)
     trainer = Trainer(config, train_loader, test_loader)
     trainer.train()
