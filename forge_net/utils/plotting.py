@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import pyvista as pv
 pv.start_xvfb()
 pv.set_jupyter_backend('static')
@@ -656,7 +657,8 @@ def plot_eval_series(all_stats_dict,
     last_step_idx = display_rec_indices[-1] + 1 if display_rec_indices else 1
     
     fig = plt.figure(figsize=(num_cols * 4, 12))
-    gs = fig.add_gridspec(3, num_cols, height_ratios=[1.5, 1.5, 1])
+
+    gs = fig.add_gridspec(3, num_cols, height_ratios=[1.5, 1.5, 1.15])
 
     # --- ROW 0: Ground Truth ---
     ax_gt0 = fig.add_subplot(gs[0, 0], projection='3d')
@@ -682,7 +684,10 @@ def plot_eval_series(all_stats_dict,
         plot_pc(ax, rec_step_seq[idx], 'red', f"Recursive Pred Step {idx + 1}")
     
     # --- ROW 2: Truncated Loss Curve ---
-    ax_loss = fig.add_subplot(gs[2, :])
+    import math
+    l_col = math.floor((num_cols / 100) * 22.5)
+    u_col = math.floor((num_cols / 100) * 82.5)
+    ax_loss = fig.add_subplot(gs[2, l_col:u_col+1])
 
     if mode == 'loss':
         
@@ -747,17 +752,17 @@ def plot_eval_series(all_stats_dict,
 
         #Create one step plots
         ax_loss.plot(steps, one_step_mean_means, label='Mean Single Step Distance', 
-                    color='blue',marker='x', alpha=0.6)
+                    color='blue',marker='.', alpha=0.6)
         
         ax_loss.plot(steps, one_step_mean_95pct_means, label='Worst 5%', 
-                    color='blue',marker='x', linestyle='dashed', alpha=0.6)
+                    color='blue',marker='.', linestyle='dashed', alpha=0.6)
         
        #Create rec step plots
-        ax_loss.plot(steps, rec_step_mean_means, label='Mean Single Step Distance', 
-                    color='red',marker='x', alpha=0.6)
+        ax_loss.plot(steps, rec_step_mean_means, label='Mean Recursive Step Distance', 
+                    color='red',marker='.', alpha=0.6)
         
         ax_loss.plot(steps, rec_step_mean_95pct_means, label='Worst 5%', 
-                    color='red',marker='x', linestyle='dashed', alpha=0.6)
+                    color='red',marker='.', linestyle='dashed', alpha=0.6)
         
         if fill_variation:
                 
@@ -775,6 +780,7 @@ def plot_eval_series(all_stats_dict,
         ax_loss.set_xlabel("Step Number")
         ax_loss.set_ylabel("Mean Euclidean Distance")
         ax_loss.set_xticks(steps)
+        ax_loss.xaxis.set_major_locator(ticker.MultipleLocator(5))
         ax_loss.legend(loc='upper left')
         ax_loss.grid(True, which='both', alpha=0.3)
 
@@ -794,6 +800,6 @@ def plot_eval_series(all_stats_dict,
         ax_hausdorff.set_ylabel('Mean Hausdorff Distance')
         ax_hausdorff.tick_params(axis='y', colors='green')
 
-    plt.tight_layout()
+
     plt.savefig(fig_path)
 

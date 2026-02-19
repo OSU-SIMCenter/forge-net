@@ -86,7 +86,7 @@ def evaluate(config, trainer):
                                             fig_path = idx_path / f"vector_fields_loss_{idx}.png")
 
 def evaluate_series(config, trainer, num_series, min_series_length, 
-                    max_cols, n_step, add_chamfer, add_hausdorff, save_meshes):
+                    max_cols, plot_mode, n_step, add_chamfer, add_hausdorff, save_meshes):
     '''
     Docstring for evaluate_series
     
@@ -95,6 +95,7 @@ def evaluate_series(config, trainer, num_series, min_series_length,
     :param num_series: How many series to evaluate total (e.g n=25)
     :param min_series_length: Minimum rollout length
     :param max_cols: maximum columns for the series scatters (can be very wide)
+    :param plot_mode: "dist" or "loss" - which metrics to plot
     :param n_step: Make plots ever n_steps
     :param add_chamfer: whether to calculate and add chamfer distance to the eval plot
     :param add_hausdorff: Uses LSQR to reconstruct surface mesh and compute hausdorff distance
@@ -183,7 +184,7 @@ def evaluate_series(config, trainer, num_series, min_series_length,
 
         x_recursive = torch.tensor(states[series_start_idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
 
-        for idx in tqdm(range(series_start_idx, series_end_idx+1)):
+        for idx in tqdm(range(series_start_idx, series_end_idx)):
             x_t_gt = torch.tensor(states[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
             x_tp1_gt = torch.tensor(states_tp1[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
             a_t = torch.tensor(actions[idx], dtype=torch.float32).unsqueeze(0).to(trainer.device)
@@ -193,9 +194,7 @@ def evaluate_series(config, trainer, num_series, min_series_length,
             
             if idx != series_start_idx:
                 x_recursive = x_recursive + delta_recursive.transpose(1, 2) / 100
-                
-            x_rec_np = x_recursive.squeeze().cpu().numpy().T
-
+                 
             one_step_sq_diff_arr = ((x_tp1_hat - x_tp1_gt)**2).squeeze(0).cpu().numpy()
             rec_step_sq_diff_arr = ((x_recursive - x_tp1_gt)**2).squeeze(0).cpu().numpy()
 
@@ -221,7 +220,6 @@ def evaluate_series(config, trainer, num_series, min_series_length,
             rec_step_95pct_std = np.std(rec_step_step_95pct_arr)
 
             #save everything
-            # print("Saving series results..........")
             series_stats_dict['gt_steps'].append(x_t_gt.squeeze().cpu().numpy().T)
             series_stats_dict['one_step_preds'].append(x_tp1_hat.squeeze().cpu().numpy().T)
             series_stats_dict['rec_step_preds'].append(x_recursive.squeeze().cpu().numpy().T)
@@ -236,12 +234,19 @@ def evaluate_series(config, trainer, num_series, min_series_length,
             series_stats_dict['rec_step_dist_95pct_stds'].append(rec_step_95pct_std)
             series_stats_dict['rec_step_mses'].append(rec_step_mse)
 
-            #compute other metrics
             if add_chamfer:
-                print("Calculating chamfers..........")
+
                 rec_step_chamfer =  chamfer_distance(x_recursive.permute(0,2,1), x_tp1_gt.permute(0,2,1))[0].item()
                 series_stats_dict['rec_step_chamfers'].append(rec_step_chamfer)
-                print("Found chamfer distance:" , rec_step_chamfer, "..........")
+
+
+            if idx + 1 < series_end_idx:
+                #Transform into next frame reference
+                x_rec_np = x_recursive.squeeze().cpu().numpy().T
+                x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
+                x_rec_transformed = transform_points(x_rec_world, rotations[idx + 1], positions[idx + 1])
+                x_recursive = torch.tensor(x_rec_transformed, dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+
 
             if add_hausdorff: # mesh reconstruction is pretty slow
                 mesh_data = data['meshes'][0]
@@ -249,7 +254,7 @@ def evaluate_series(config, trainer, num_series, min_series_length,
                 tri_ids = data['tri_ids'][idx]
                 bary_coords = data['bary_coords'][idx]
                 gt_mesh = data['meshes_tp1'][idx]
-                print("Inverting barycenter deltas to vertex deltas with LSQR")
+            
                 recovered_mesh, current_deltas = invert_deltas_to_mesh(
                                                                         base_mesh, 
                                                                         x_rec_np, 
@@ -270,16 +275,8 @@ def evaluate_series(config, trainer, num_series, min_series_length,
                                             n_frames=300, 
                                             fps=15)
                 #compute hausdorff distance
-                print("Calculating symmetric haussdorff distance")
                 rec_step_hausdorff = compute_haussdorff_distance(pv_mesh1=gt_mesh_pv, pv_mesh2=recovered_mesh)
                 series_stats_dict['rec_step_hausdorffs'].append(rec_step_hausdorff)
-
-            if idx + 1 < series_end_idx:
-                print("Transforming to next frame..........")     
-                #Transform into next frame reference
-                x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
-                x_rec_transformed = transform_points(x_rec_world, rotations[idx + 1], positions[idx + 1])
-                x_recursive = torch.tensor(x_rec_transformed, dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
             
         #save everything again
         all_stats_dict['all_gt_steps'].append(series_stats_dict['gt_steps'])
@@ -300,7 +297,7 @@ def evaluate_series(config, trainer, num_series, min_series_length,
 
     
     plot_eval_series(all_stats_dict,
-                      mode='loss',
+                      mode=plot_mode,
                       max_cols=max_cols,
                       n_step=n_step,
                       fill_variation=True,
@@ -363,7 +360,8 @@ if __name__ == "__main__":
     trainer = Trainer(config, train_loader, log_to_tb=False)
     # evaluate(config, trainer)
     evaluate_series(config, trainer,
-                    add_chamfer=True, add_hausdorff=True,
-                    num_series=1, min_series_length=75, 
-                    n_step=15, max_cols=6, save_meshes=False)
+                    add_chamfer=True, add_hausdorff=False,
+                    plot_mode='dist',
+                    num_series=50, min_series_length=100, 
+                    n_step=15, max_cols=7, save_meshes=False)
     # eval_time(config, trainer)
