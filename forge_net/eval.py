@@ -3,6 +3,10 @@ import torch
 from forge_net.utils.utils import *
 import os
 
+def forward(trainer, x,a):
+    with torch.no_grad():
+        return(trainer.net(x_t=x,a_t=a))
+
 def evaluate(config, trainer):
     
     data_path = config["datasets"]["data_out"]
@@ -15,8 +19,17 @@ def evaluate(config, trainer):
     # positions = data['positions']
     # rotations = data['rotations']
 
-    states = np.array([[0, 0, 0], [1, 1, 1], [-1, -1, 1]])
-    states_tp1 = np.array([[0, 0, 0], [1, 1, 1], [-1, -1, 1]])
+    # REMEMBER THIS
+    states = np.array(np.ones((1000,3)))
+    states = torch.tensor(states, d_type = torch.float32).T.unsqueeze(0)
+    steps = np.array(np.ones((1)))
+    steps = torch.tensor(steps, d_type=torch.float32).T.unsqueeze(0)
+    forward(states, steps)
+
+
+    # add deltas to states
+    # return states
+
 
     steps = np.array([1, 2, 3])
     positions = np.array([[0, 0, 0], [1, 1, 1], [-1, -1, 1]])
@@ -26,7 +39,7 @@ def evaluate(config, trainer):
         [0.0, 0.707, 0.0, 0.707]   # Quaternion 3
     ])
 
-    # Define all possible features
+    # Define all possible
     feature_map = {
         "steps": lambda: steps,
         "positions": lambda: positions[:, 0].reshape(-1, 1), #if positions we only care about translation in X
@@ -44,10 +57,6 @@ def evaluate(config, trainer):
     trainer.load(model_path = output_folder / "best_model.pth")
 
     # plot_network_weights(trainer.state_dict, fig_path=eval_path / "network_hist.png") 
-    
-    def forward(x,a):
-        with torch.no_grad():
-            return(trainer.net(x_t=x,a_t=a))
     
     for idx in config["eval"]["eval_idxs"]:
         idx_path = eval_path / str(idx)

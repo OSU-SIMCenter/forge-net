@@ -35,7 +35,7 @@ from utils.utils import *
 import yaml
 import os
 
-from eval import evaluate
+from eval import evaluate, forward
 from main import make_dataloaders
 
 
@@ -231,7 +231,14 @@ if __name__ == "__main__":
         config = yaml.safe_load(file)
     trainer = Trainer(config, log_to_tb=False)
     # evaluate(config, trainer)
-    evaluate(config, trainer)
+    batch_size = 2  # Set batch size to 2 or more
+    states = np.ones((batch_size, 3, 1000))  # Shape: (B, C, N)
+    states = torch.tensor(states, dtype=torch.float32)
+
+    action_dims = config["network"]["action_dims"]
+    steps = np.ones((batch_size, action_dims))  # Shape: (B, action_dims)
+    steps = torch.tensor(steps, dtype=torch.float32)
+    print(forward(trainer, states, steps))
     print("done!")
 
     asyncio.run(main())
