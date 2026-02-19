@@ -66,6 +66,11 @@ class ClientRequest:
             rotation=float(obj.get("rotation", 0.0)),
             force=float(obj.get("force", 0.0)),
         )
+    
+
+    # utils.py barycentric sampling
+
+    # 
 
 
 # ---------------------------
@@ -82,14 +87,40 @@ def handle_update(req: ClientRequest) -> Tuple[np.ndarray, np.ndarray, bool]:
     App-specific: fill these in.
     """
     # Example dummy mesh: a single triangle
-    vertices = np.array(
-        [0.0, 0.0, 0.0,
-         1.0, 0.0, 0.0,
-         0.0, 1.0, 0.0,
-         1.0, 1.0, 0.0],
-        dtype=np.float32
-    )
-    faces = np.array([0, 1, 2, 1, 2, 3], dtype=np.int32)
+    # vertices = np.array(
+    #     [0.0, 0.0, 0.0,
+    #      1.0, 0.0, 0.0,
+    #      0.0, 1.0, 0.0,
+    #      1.0, 1.0, 0.0],
+    #     dtype=np.float32
+    # )
+
+
+    # most of this should happen in initialization instead of every strike
+    base_path = get_project_root()
+    run_name = "mse_1024_unmaksed_seeded_w_tri_ids"
+    config_path = base_path / "runs" / run_name / "config_out.yml"
+    with open(config_path, 'r') as file:
+        config = yaml.safe_load(file)
+    trainer = Trainer(config, log_to_tb=False)
+    # evaluate(config, trainer)
+    batch_size = 2  # Set batch size to 2 or more
+    states = np.ones((batch_size, 3, 1000))  # Shape: (B, C, N)
+    states = torch.tensor(states, dtype=torch.float32)
+
+    action_dims = config["network"]["action_dims"]
+    steps = np.ones((batch_size, action_dims))  # Shape: (B, action_dims)
+    steps = torch.tensor(steps, dtype=torch.float32)
+    tensor = forward(trainer, states, steps)
+
+
+    if tensor.dim() == 3:
+        tensor = tensor[0]
+    vertices = tensor.detach().cpu().numpy()
+    vertices.astype(np.float32).reshape(-1)
+
+
+    faces = np.array(np.random.randint(0, 100, size=(1, 600)), dtype=np.int32)
     is_pressing = False
     return vertices, faces, is_pressing
 
@@ -224,21 +255,6 @@ async def main(host: str = "localhost", port: int = 8765):
 
 if __name__ == "__main__":
 
-    base_path = get_project_root()
-    run_name = "mse_1024_unmaksed_seeded_w_tri_ids"
-    config_path = base_path / "runs" / run_name / "config_out.yml"
-    with open(config_path, 'r') as file:
-        config = yaml.safe_load(file)
-    trainer = Trainer(config, log_to_tb=False)
-    # evaluate(config, trainer)
-    batch_size = 2  # Set batch size to 2 or more
-    states = np.ones((batch_size, 3, 1000))  # Shape: (B, C, N)
-    states = torch.tensor(states, dtype=torch.float32)
-
-    action_dims = config["network"]["action_dims"]
-    steps = np.ones((batch_size, action_dims))  # Shape: (B, action_dims)
-    steps = torch.tensor(steps, dtype=torch.float32)
-    print(forward(trainer, states, steps))
     print("done!")
 
     asyncio.run(main())
