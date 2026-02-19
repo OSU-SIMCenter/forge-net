@@ -1,6 +1,6 @@
 import numpy as np
 import pyvista as pv
-import trimesh as tm
+import open3d as o3d
 from pathlib import Path
 import math
 from scipy.spatial.transform import Rotation
@@ -265,6 +265,33 @@ def normalize_points(points):
     point_min = np.min(points, axis=0)
     point_max = np.max(points, axis=0)
     return( (points - point_min) / (point_max - point_min) )
+
+def pyvista_to_open3d(pv_mesh):
+
+    vertices = pv_mesh.points
+    faces = pv_mesh.faces.reshape(-1, 4)[:, 1:]
+    o3d_mesh = o3d.geometry.TriangleMesh()
+    o3d_mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    o3d_mesh.triangles = o3d.utility.Vector3iVector(faces)
+        
+    return o3d_mesh
+
+def compute_haussdorff_distance(pv_mesh1, pv_mesh2, samples=1000):
+    
+    mesh1 = pyvista_to_open3d(pv_mesh1)
+    mesh2 = pyvista_to_open3d(pv_mesh2)
+    pcd1 = mesh1.sample_points_uniformly(number_of_points=samples)
+    pcd2 = mesh2.sample_points_uniformly(number_of_points=samples)
+    np.asarray(pcd1.points)
+    np.asarray(pcd2.points)
+
+    dists_1to2 = pcd1.compute_point_cloud_distance(pcd2)
+    dists_2to1 = pcd2.compute_point_cloud_distance(pcd1)
+
+    # chamfer_dist = np.mean(np.square(dists_1to2)) + np.mean(np.square(dists_2to1))
+    hausdorff_dist = max(max(dists_1to2), max(dists_2to1))  # https://en.wikipedia.org/wiki/Hausdorff_distance
+    return(hausdorff_dist)
+ 
 
 def transform_points(points, quaternion, translation_vector):
     return Rotation.from_quat(quaternion).apply(points) + translation_vector

@@ -8,7 +8,6 @@ from pathlib import Path
 # from forge_net.eval import evaluate_series
 
 def get_graph_laplacian(mesh):
-    """Computes the uniform graph Laplacian matrix for regularization."""
     num_vertices = mesh.n_points
     faces = mesh.regular_faces
     
@@ -18,102 +17,36 @@ def get_graph_laplacian(mesh):
     
     data = np.ones_like(rows, dtype=float)
     W = coo_matrix((data, (rows, cols)), shape=(num_vertices, num_vertices)).tocsr()
-    W.data[:] = 1.0 # Binary adjacency
+    W.data[:] = 1.0 
     
     degree = np.array(W.sum(axis=1)).flatten()
     D = coo_matrix((degree, (np.arange(num_vertices), np.arange(num_vertices))), 
                    shape=(num_vertices, num_vertices)).tocsr()
     return D - W
 
-# def invert_deltas_to_mesh(base_mesh, predicted_pc, tri_ids, bary_coords, alpha=0.05):
-#     """
-#     Inverts predicted sampled points back to the mesh vertices.
-#     """
-#     num_samples = len(predicted_pc)
-#     num_vertices = base_mesh.n_points
-#     triangles = base_mesh.regular_faces
+def invert_deltas_to_mesh(base_mesh, predicted_pc, tri_ids, bary_coords, 
+                          alpha=0.05, initial_guess=None):
     
-#     # 1. Get Rest Positions for the sampled points
-#     # We calculate the delta relative to the starting position
-#     v_rest = base_mesh.points
-#     p_rest = np.zeros_like(predicted_pc)
-    
-#     # Optimized forward pass to find point rest positions
-#     v0 = v_rest[triangles[tri_ids, 0]]
-#     v1 = v_rest[triangles[tri_ids, 1]]
-#     v2 = v_rest[triangles[tri_ids, 2]]
-
-#     p_rest = (bary_coords[:, 0:1] * v0 + 
-#               bary_coords[:, 1:2] * v1 + 
-#               bary_coords[:, 2:3] * v2)
-    
-#     point_deltas = predicted_pc - p_rest
-
-#     # 2. Build Barycentric Matrix A
-#     rows = np.repeat(np.arange(num_samples), 3)
-#     cols = triangles[tri_ids].flatten()
-#     weights = bary_coords.flatten()
-#     A = coo_matrix((weights, (rows, cols)), shape=(num_samples, num_vertices)).tocsr()
-
-#     # 3. Add Laplacian Regularization
-#     if alpha > 0:
-#         L = get_graph_laplacian(base_mesh)
-#         A_augmented = vstack([A, np.sqrt(alpha) * L])
-#         rhs_padding = np.zeros((num_vertices, 3))
-#         rhs_all = np.vstack([point_deltas, rhs_padding])
-#     else:
-#         A_augmented = A
-#         rhs_all = point_deltas
-
-#     # 4. Solve for vertex deltas
-#     v_deltas = np.zeros((num_vertices, 3))
-#     for d in range(3):
-#         res = lsqr(A_augmented, rhs_all[:, d], damp=1e-4)
-#         v_deltas[:, d] = res[0]
-        
-#     deformed_mesh = base_mesh.copy()
-#     deformed_mesh.points += v_deltas
-#     return deformed_mesh
-
-def invert_deltas_to_mesh(base_mesh, predicted_pc, tri_ids, bary_coords, alpha=0.05):
-    # 1. Force everything to the expected dimensions
+    # 1. Shape Standardization
     predicted_pc = np.asarray(predicted_pc).reshape(-1, 3)
     tri_ids = np.asarray(tri_ids).astype(int).flatten()
     bary_coords = np.asarray(bary_coords).reshape(-1, 3)
     
-    num_samples = predicted_pc.shape[0] # Should be 1024
+    num_samples = predicted_pc.shape[0]
     num_vertices = base_mesh.n_points
 
-    # 2. Extract Triangles safely (handles PyVista's [3, v1, v2, v3] padding)
     if base_mesh.faces.size > 0:
-        # Reshape to (N, 4) and drop the first column (the "3")
         triangles = base_mesh.faces.reshape(-1, 4)[:, 1:]
     else:
-        raise ValueError("The provided base_mesh has no faces.")
+        raise ValueError("Base mesh has no faces.")
 
-    # --- DEBUG SECTION ---
-    # These three MUST be identical for coo_matrix to work
-    len_rows = num_samples * 3
-    
-    # triangles[tri_ids] should result in (num_samples, 3)
-    relevant_vertex_indices = triangles[tri_ids] 
-    len_cols = relevant_vertex_indices.size
-    
-    len_weights = bary_coords.size
-    
-    if not (len_rows == len_cols == len_weights):
-        print(f"DEBUG: Length Mismatch!")
-        print(f" - Rows length (num_samples * 3): {len_rows}")
-        print(f" - Cols length (triangles[tri_ids]): {len_cols}")
-        print(f" - Weights length (bary_coords): {len_weights}")
-        raise ValueError("Length mismatch in matrix assembly.")
-    # ---------------------
-
-    # 3. Rest Position calculation
+    # 2. Calculate Target Point Deltas (RHS)
     v_rest = base_mesh.points
-    v0 = v_rest[relevant_vertex_indices[:, 0]]
-    v1 = v_rest[relevant_vertex_indices[:, 1]]
-    v2 = v_rest[relevant_vertex_indices[:, 2]]
+    relevant_indices = triangles[tri_ids]
+    
+    v0 = v_rest[relevant_indices[:, 0]]
+    v1 = v_rest[relevant_indices[:, 1]]
+    v2 = v_rest[relevant_indices[:, 2]]
     
     p_rest = (bary_coords[:, 0:1] * v0 + 
               bary_coords[:, 1:2] * v1 + 
@@ -121,32 +54,55 @@ def invert_deltas_to_mesh(base_mesh, predicted_pc, tri_ids, bary_coords, alpha=0
     
     point_deltas = predicted_pc - p_rest
 
-    # 4. Assembly
+    # 3. Build Sparse System Matrix A
     rows = np.repeat(np.arange(num_samples), 3)
-    cols = relevant_vertex_indices.flatten()
+    cols = relevant_indices.flatten()
     weights = bary_coords.flatten()
     
     A = coo_matrix((weights, (rows, cols)), shape=(num_samples, num_vertices)).tocsr()
 
-    # 5. Laplacian and Solver
+    # 4. Column Scaling (Jacobi Preconditioning)
+    # Scale columns to have unit norm to balance solver gradients
+    col_norms = np.sqrt(np.array(A.power(2).sum(axis=0))).flatten()
+    col_norms[col_norms == 0] = 1.0 
+    
+    M_inv = coo_matrix((1.0 / col_norms, (np.arange(num_vertices), np.arange(num_vertices))),
+                       shape=(num_vertices, num_vertices))
+    
+    A_scaled = A @ M_inv
+
+    # 5. Regularization & Stacking
     if alpha > 0:
         L = get_graph_laplacian(base_mesh)
-        A_augmented = vstack([A, np.sqrt(alpha) * L])
-        rhs_padding = np.zeros((num_vertices, 3))
-        rhs_all = np.vstack([point_deltas, rhs_padding])
-    else:
-        A_augmented = A
-        rhs_all = point_deltas
-
-    v_deltas = np.zeros((num_vertices, 3))
-    for d in range(3):
-        # Using lsqr with a small dampening for stability
-        res = lsqr(A_augmented, rhs_all[:, d], damp=1e-4)
-        v_deltas[:, d] = res[0]
+        L_scaled = L @ M_inv # Scale Laplacian to match A
         
+        A_final = vstack([A_scaled, np.sqrt(alpha) * L_scaled])
+        rhs_padding = np.zeros((num_vertices, 3))
+        rhs_final = np.vstack([point_deltas, rhs_padding])
+    else:
+        A_final = A_scaled
+        rhs_final = point_deltas
+
+    # 6. Warm Start Scaling
+    x0_scaled = None
+    if initial_guess is not None:
+        # Transform previous deltas into the scaled coordinate system
+        x0_scaled = initial_guess * col_norms[:, np.newaxis]
+
+    # 7. Solve
+    v_deltas_scaled = np.zeros((num_vertices, 3))
+    for d in range(3):
+        x0_d = x0_scaled[:, d] if x0_scaled is not None else None
+        res = lsqr(A_final, rhs_final[:, d], damp=0.1, x0=x0_d)
+        v_deltas_scaled[:, d] = res[0]
+        
+    # 8. Unscale and Apply
+    v_deltas = v_deltas_scaled / col_norms[:, np.newaxis]
+    
     deformed_mesh = base_mesh.copy()
     deformed_mesh.points += v_deltas
-    return deformed_mesh
+    
+    return deformed_mesh, v_deltas
 
 def save_comparison_turntable(pred_mesh, gt_mesh, output_path, n_frames=150, fps=12):
     """
@@ -200,7 +156,7 @@ if __name__ == "__main__":
     assert os.path.exists(data_path), "Dataset found"
     data  = np.load(data_path, allow_pickle=True)
     
-    recursive_preds, sidx, eidx = evaluate_series(config, trainer)
+    # recursive_preds, sidx, eidx = evaluate_series(config, trainer)s
     output_folder = Path(config["run"]["run_folder"])
     eval_path = output_folder / "eval" / "surfaces"
     eval_path.mkdir(exist_ok=True)
@@ -210,18 +166,18 @@ if __name__ == "__main__":
     tri_ids = data['tri_ids']
     bary_coords = data['bary_coords']
     gt_meshes = data['meshes_tp1']
-
-    interval = 20
-    for i, pc_np in enumerate(recursive_preds):
-        if i % interval == 0:
-            # 1. Recover the mesh vertices from point cloud predictions
-            recovered_mesh = invert_deltas_to_mesh(
-                base_mesh_pv, pc_np, tri_ids[i], bary_coords[i], alpha=0
-            )
+    print(len(gt_meshes[0]['faces']))
+    # interval = 20
+    # for i, pc_np in enumerate(recursive_preds):
+    #     if i % interval == 0:
+    #         # 1. Recover the mesh vertices from point cloud predictions
+    #         recovered_mesh = invert_deltas_to_mesh(
+    #             base_mesh_pv, pc_np, tri_ids[i], bary_coords[i], alpha=0
+    #         )
             
-            # 2. Get the corresponding Ground Truth mesh
-            gt_mesh_pv = pv.PolyData(gt_meshes[i])
+    #         # 2. Get the corresponding Ground Truth mesh
+    #         gt_mesh_pv = pv.PolyData(gt_meshes[i])
             
-            # 3. Generate side-by-side comparison
-            filename = f"comparison_step_{i}.gif"
-            save_comparison_turntable(recovered_mesh, gt_mesh_pv, eval_path / filename)
+    #         # 3. Generate side-by-side comparison
+    #         filename = f"comparison_step_{i}.gif"
+    #         save_comparison_turntable(recovered_mesh, gt_mesh_pv, eval_path / filename)

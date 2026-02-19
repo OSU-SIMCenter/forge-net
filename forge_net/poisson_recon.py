@@ -67,7 +67,7 @@ if __name__ == "__main__":
     import yaml
 
     base_path = get_project_root()
-    run_name = "mse_1024_unmasked_seeded"
+    run_name = "mse_1024_unmasked_seeded_tri_ids"
     config_path = base_path / "runs" / run_name / "config_out.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)

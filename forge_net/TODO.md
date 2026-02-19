@@ -9,3 +9,4 @@ To do list for getting paper published
 - [x] Create timeline plot of hits GT vs pred using MSE Loss
 - [ ] Create timeline plot of hits GT vs pred using Chamfer Loss
 - [ ] Loss versus press_window - show learning rate (table for next unit of work)
+- [ ] Verify any differences between loss_fn(delta_t, delta_tp1) and loss_fn(x_t, x_tp1)

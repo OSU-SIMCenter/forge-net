@@ -210,15 +210,7 @@ class Trainer:
             # Visualization checkpoints
             if i % self.config["run"]["save_every"] == 0:
                 test_samples, test_actions, test_deltas, test_samples_next = next(iter(self.test_loader))
-                loss, test_output = self.test_batch(test_samples, test_actions, test_deltas)
-                plotPCbatch(
-                    test_samples,
-                    test_samples_next[:, -1, :, :],
-                    test_output,
-                    show=False,
-                    save=True,
-                    name=(self.output_folder / f"epoch_{i}.png")
-                )
+                loss, test_output = self.test_batch(test_samples, test_actions, test_deltas, test_samples_next)
             
             # Early stopping check
             if self.early_stop:
@@ -238,40 +230,41 @@ class Trainer:
     def train_epoch(self):
         epoch_loss = 0
         
-        for i, (x_t, a, delta_t, _) in enumerate(self.train_loader):
+        for i, (x_t, a, delta_t, x_tp1) in enumerate(self.train_loader):
             self.optimizer.zero_grad()
             x_t = x_t.to(self.device) # [B, N, 3]
             x_t_perm = x_t.permute(0, 2, 1) # [B, 3, N]
+            x_tp1 = x_tp1.to(self.device)
             a = a.to(self.device) # [B, 1, A]
             delta_t = delta_t.to(self.device) # [B, 1, N, 3]
-            delta_pred = self.net(x_t_perm, a[:, 0, :]) # [B, N, 3]
+            delta_hat = self.net(x_t_perm, a[:, 0, :]) # [B, N, 3]
             delta_gt = delta_t[:, 0, :, :] # [B, N, 3]
-            loss = self.loss_fn(delta_pred=delta_pred, delta_gt=delta_gt)
+            loss = self.loss_fn(delta_hat, delta_gt)
             loss.backward()
             self.optimizer.step()
             epoch_loss += loss.item()
 
         return epoch_loss/(i+1)
 
-    def test_batch(self, x_t, a, delta_t):
+    def test_batch(self, x_t, a, delta_t, x_tp1):
         with torch.no_grad():
             x_t = x_t.to(self.device)
+            x_tp1 = x_tp1.to(self.device)
             a = a.to(self.device)
             delta_t = delta_t.to(self.device)
             x_t_perm = x_t.permute(0, 2, 1)
-            delta_pred = self.net(x_t_perm, a[:, 0, :])
+            delta_hat = self.net(x_t_perm, a[:, 0, :])
             delta_gt = delta_t[:, 0, :, :]
-            loss = self.loss_fn(delta_pred=delta_pred, delta_gt=delta_gt)
-            x_tp1_pred = x_t + delta_pred
-
-
-        return loss.item(), x_tp1_pred.cpu()
+            x_tp1_hat = x_t + delta_hat / 100
+            loss = self.loss_fn(delta_hat, delta_gt)
+            
+        return loss.item(), x_tp1_hat.cpu()
 
     def test_epoch(self):
         with torch.no_grad():
             epoch_loss = 0
-            for i, (x_t, a, delta_t, _) in enumerate(self.test_loader):
-                loss, _ = self.test_batch(x_t, a, delta_t)
+            for i, (x_t, a, delta_t, x_tp1) in enumerate(self.test_loader):
+                loss, _ = self.test_batch(x_t, a, delta_t, x_tp1)
                 epoch_loss += loss
         return epoch_loss/(i+1)
     

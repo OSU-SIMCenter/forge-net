@@ -4,9 +4,15 @@ from forge_net.utils.utils import *
 from forge_net.utils.plotting import * 
 from forge_net.invert_deltas import invert_deltas_to_mesh, save_comparison_turntable
 from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
+from tqdm import tqdm 
 
 def evaluate(config, trainer):
+    '''
+    Evaluate a trained ForgeNet network by creating some simple scatter and vector plots
     
+    :param config: YAML config containing paths to data and network settings
+    :param trainer: trainer class instance
+    '''
     data_path = config["datasets"]["data_out"]
     assert os.path.exists(data_path), "Dataset found"
     data  = np.load(data_path)
@@ -42,7 +48,7 @@ def evaluate(config, trainer):
         delta_hat = delta_hat.cpu().squeeze().T
         delta_gt = (x_tp1 - x_t).squeeze().cpu()
 
-        if config["network"]["loss"] == "mse":
+        if config["network"]["loss"] == "mse": #TODO - these should be x_t and x_tp1
             loss_cont = torch.sum(((delta_hat - delta_gt) ** 2),axis=0).squeeze(0).numpy()
         
         elif config["network"]["loss"] == "chamfer" or config["network"]["loss"] == "wsd":
@@ -79,8 +85,22 @@ def evaluate(config, trainer):
                                             loss_cont=loss_cont,
                                             fig_path = idx_path / f"vector_fields_loss_{idx}.png")
 
-def evaluate_series(config, trainer):
-    #NOTE: if your data is randomly seeded the losses between iterations may be higher than expected
+def evaluate_series(config, trainer, num_series, min_series_length, 
+                    max_cols, n_step, add_chamfer, add_hausdorff, save_meshes):
+    '''
+    Docstring for evaluate_series
+    
+    :param config: YAML config containing paths to data and network settings
+    :param trainer: trainer class instance
+    :param num_series: How many series to evaluate total (e.g n=25)
+    :param min_series_length: Minimum rollout length
+    :param max_cols: maximum columns for the series scatters (can be very wide)
+    :param n_step: Make plots ever n_steps
+    :param add_chamfer: whether to calculate and add chamfer distance to the eval plot
+    :param add_hausdorff: Uses LSQR to reconstruct surface mesh and compute hausdorff distance
+    :param save_meshes: Whether to save reconstructed mesh (or simply use it for a metric )
+    '''
+    #NOTE: if data is randomly seeded the losses between iterations may be higher than expected
     data_path = config["datasets"]["data_out"]
     assert os.path.exists(data_path), "Dataset found"
     data  = np.load(data_path, allow_pickle=True)
@@ -90,7 +110,6 @@ def evaluate_series(config, trainer):
     action_features = config["network"]["action_features"]
     positions = data['positions']
     rotations = data['rotations']
-    series_lengths = data['series_lengths']
 
     actions = actions_from_feature_map(action_features, data)
 
@@ -99,96 +118,234 @@ def evaluate_series(config, trainer):
     eval_path.mkdir(exist_ok=True)
 
     trainer.load(model_path = output_folder / "best_model.pth")
+    trainer.net.eval()
     
-    series_eval_idx = 4
-    series_length = series_lengths[series_eval_idx]
-    series_start_idx = sum(series_lengths[:series_eval_idx])
-    series_end_idx = series_start_idx + series_length - 1
-    # series_id = series_ids[series_eval_idx]
-    print(f"Evaluating series {series_eval_idx} out of {len(series_lengths)} with \n \
-            Series length: {series_length}  \
-            Starting index: {series_start_idx} \
-            End index: {series_end_idx} " )
-    
-    trainer.load(model_path=output_folder / "best_model.pth")
-    trainer.net.eval() # Set to eval mode
-
     def forward(x, a):
         with torch.no_grad():
             return(trainer.net(x_t=x, a_t=a))
+    
+    series_lengths = data['series_lengths']
+    eval_series_idxs = [] 
+    for idx, sl in enumerate(series_lengths):
+        if sl >= min_series_length:
+                eval_series_idxs.append(idx)
+        if len(eval_series_idxs) >= num_series:
+            break
+    
+    all_stats_dict = {
+        'all_gt_steps': [],
+        'all_one_step_preds': [],
+        'all_rec_step_preds': [],
+        'all_one_step_dist_means' : [],
+        'all_one_step_dist_stds' : [],
+        'all_one_step_dist_95pct_means' : [],
+        'all_one_step_dist_95pct_stds' : [],
+        'all_one_step_mses' : [],
+        'all_rec_step_dist_means' : [],
+        'all_rec_step_dist_stds' : [],
+        'all_rec_step_dist_95pct_means' : [],
+        'all_rec_step_dist_95pct_stds' : [],
+        'all_rec_step_mses' : [],
+        'all_rec_step_chamfers' : [],
+        'all_rec_step_hausdorffs' : [] } 
 
-    gt_sequence = []
-    single_step_preds = []
-    recursive_preds = []
-    losses = []
-    dev_losses = []
-    recursive_losses = []
-
-    x_recursive = torch.tensor(states[series_start_idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
-    counter = 0
-    n_step = 15
-    invert_deltas = True
-    for idx in range(series_start_idx, series_end_idx+1):
-        x_t_gt = torch.tensor(states[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
-        x_tp1_gt = torch.tensor(states_tp1[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
-        a_t = torch.tensor(actions[idx], dtype=torch.float32).unsqueeze(0).to(trainer.device)
-
-        delta_hat = forward(x_t_gt, a_t)
-        x_tp1_hat = x_t_gt + delta_hat.transpose(1, 2) / 100
-        delta_recursive = forward(x_recursive, a_t)
-        if idx != series_start_idx:
-            x_recursive = x_recursive + delta_recursive.transpose(1, 2) / 100
-
-        step_loss = torch.mean((x_tp1_hat - x_tp1_gt)**2).item()
-        dev_loss = torch.mean((x_recursive - x_tp1_hat)**2).item()
-        rec_loss = torch.mean((x_recursive - x_tp1_gt)**2).item()
-
-        gt_sequence.append(x_t_gt.squeeze().cpu().numpy().T)
-        single_step_preds.append(x_tp1_hat.squeeze().cpu().numpy().T)
-        recursive_preds.append(x_recursive.squeeze().cpu().numpy().T)
-        losses.append(step_loss)
-        dev_losses.append(dev_loss)
-        recursive_losses.append(rec_loss)
-
-        if idx + 1 < series_end_idx:            
-            # Convert to numpy, transform, convert back
-            x_rec_np = x_recursive.squeeze().cpu().numpy().T
-            x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
-            x_rec_transformed = transform_points(x_rec_world, rotations[idx + 1], positions[idx + 1])
-            x_recursive = torch.tensor(x_rec_transformed, dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+    for eval_series_idx in tqdm(eval_series_idxs):
+        series_length = series_lengths[eval_series_idx]
+        series_start_idx = sum(series_lengths[:eval_series_idx])
+        series_end_idx = series_start_idx + series_length - 1 if series_length <= min_series_length else series_start_idx + min_series_length - 1
+        truncated_length = series_end_idx - series_start_idx
+        # series_id = series_ids[eval_series_idx]
+        # print(f"Evaluating series {eval_series_idx} out of {len(series_lengths)} with \n \
+        #         Series length: {series_length}  \
+        #         Starting index: {series_start_idx} \
+        #         End index: {series_end_idx} \
+        #         Trunacted length: {truncated_length}" )
         
-        if invert_deltas:
-            counter += 1
-            if counter % n_step == 0:
+        counter = 0
+        previous_deltas = None
+
+        series_stats_dict = {
+            'gt_steps': [],
+            'one_step_preds': [],
+            'rec_step_preds': [],
+            'one_step_dist_means': [],
+            'one_step_dist_stds': [],
+            'one_step_dist_95pct_means': [],
+            'one_step_dist_95pct_stds': [],
+            'one_step_mses': [],
+            'rec_step_dist_means': [],
+            'rec_step_dist_stds': [],
+            'rec_step_dist_95pct_means': [],
+            'rec_step_dist_95pct_stds': [],
+            'rec_step_mses': [],
+            'rec_step_chamfers': [],
+            'rec_step_hausdorffs': []  }
+
+        x_recursive = torch.tensor(states[series_start_idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+
+        for idx in tqdm(range(series_start_idx, series_end_idx+1)):
+            x_t_gt = torch.tensor(states[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+            x_tp1_gt = torch.tensor(states_tp1[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+            a_t = torch.tensor(actions[idx], dtype=torch.float32).unsqueeze(0).to(trainer.device)
+            delta_hat = forward(x_t_gt, a_t)
+            x_tp1_hat = x_t_gt + delta_hat.transpose(1, 2) / 100
+            delta_recursive = forward(x_recursive, a_t)
+            
+            if idx != series_start_idx:
+                x_recursive = x_recursive + delta_recursive.transpose(1, 2) / 100
+                
+            x_rec_np = x_recursive.squeeze().cpu().numpy().T
+
+            one_step_sq_diff_arr = ((x_tp1_hat - x_tp1_gt)**2).squeeze(0).cpu().numpy()
+            rec_step_sq_diff_arr = ((x_recursive - x_tp1_gt)**2).squeeze(0).cpu().numpy()
+
+            one_step_dist_arr = (np.sum(one_step_sq_diff_arr, axis=0))**0.5 # gives 1 distance per point (x,y,z) -> d
+            rec_step_dist_arr = (np.sum(rec_step_sq_diff_arr, axis=0))**0.5
+            
+            #compute one_step statistics
+            one_step_mse = np.mean(one_step_sq_diff_arr)            
+            one_step_dist_mean = np.mean(one_step_dist_arr)
+            one_step_dist_std = np.std(one_step_dist_arr)
+            one_step_dist_95pct = np.percentile(one_step_dist_arr, 95)
+            one_step_dist_95pct_arr = np.array([x for x in one_step_dist_arr if x >= one_step_dist_95pct]) #can also do this with np.extract?
+            one_step_dist_95pct_mean = np.mean(one_step_dist_95pct_arr)
+            one_step_dist_95pct_std = np.std(one_step_dist_95pct_arr)
+
+            #compute rec_step statistics
+            rec_step_mse = np.mean(rec_step_sq_diff_arr)
+            rec_step_dist_mean = np.mean(rec_step_dist_arr)
+            rec_step_dist_std = np.std(rec_step_dist_arr)
+            rec_step_95pct = np.percentile(rec_step_dist_arr, 95)
+            rec_step_step_95pct_arr = np.array([x for x in rec_step_dist_arr if x >= rec_step_95pct])
+            rec_step_95pct_mean = np.mean(rec_step_step_95pct_arr)
+            rec_step_95pct_std = np.std(rec_step_step_95pct_arr)
+
+            #save everything
+            # print("Saving series results..........")
+            series_stats_dict['gt_steps'].append(x_t_gt.squeeze().cpu().numpy().T)
+            series_stats_dict['one_step_preds'].append(x_tp1_hat.squeeze().cpu().numpy().T)
+            series_stats_dict['rec_step_preds'].append(x_recursive.squeeze().cpu().numpy().T)
+            series_stats_dict['one_step_dist_means'].append(one_step_dist_mean)
+            series_stats_dict['one_step_dist_stds'].append(one_step_dist_std)
+            series_stats_dict['one_step_dist_95pct_means'].append(one_step_dist_95pct_mean)
+            series_stats_dict['one_step_dist_95pct_stds'].append(one_step_dist_95pct_std)
+            series_stats_dict['one_step_mses'].append(one_step_mse)
+            series_stats_dict['rec_step_dist_means'].append(rec_step_dist_mean)
+            series_stats_dict['rec_step_dist_stds'].append(rec_step_dist_std)
+            series_stats_dict['rec_step_dist_95pct_means'].append(rec_step_95pct_mean)
+            series_stats_dict['rec_step_dist_95pct_stds'].append(rec_step_95pct_std)
+            series_stats_dict['rec_step_mses'].append(rec_step_mse)
+
+            #compute other metrics
+            if add_chamfer:
+                print("Calculating chamfers..........")
+                rec_step_chamfer =  chamfer_distance(x_recursive.permute(0,2,1), x_tp1_gt.permute(0,2,1))[0].item()
+                series_stats_dict['rec_step_chamfers'].append(rec_step_chamfer)
+                print("Found chamfer distance:" , rec_step_chamfer, "..........")
+
+            if add_hausdorff: # mesh reconstruction is pretty slow
                 mesh_data = data['meshes'][0]
-                base_mesh_pv = pv.PolyData(mesh_data['points'], mesh_data['faces'])
+                base_mesh = pv.PolyData(mesh_data['points'], mesh_data['faces'])
                 tri_ids = data['tri_ids'][idx]
                 bary_coords = data['bary_coords'][idx]
                 gt_mesh = data['meshes_tp1'][idx]
-                recovered_mesh = invert_deltas_to_mesh(
-                        base_mesh_pv, x_rec_np, tri_ids, bary_coords, alpha=0
-                    )
+                print("Inverting barycenter deltas to vertex deltas with LSQR")
+                recovered_mesh, current_deltas = invert_deltas_to_mesh(
+                                                                        base_mesh, 
+                                                                        x_rec_np, 
+                                                                        tri_ids, 
+                                                                        bary_coords, 
+                                                                        alpha=0.05,
+                                                                        initial_guess=previous_deltas
+                                                                    )
+                previous_deltas = current_deltas
                 gt_mesh_pv = pv.PolyData(gt_mesh['points'], mesh_data['faces'])
                 filename = f"comparison_step_{idx}.gif"
-                save_comparison_turntable(recovered_mesh, 
-                                        gt_mesh_pv, 
-                                        eval_path /"surfaces"/filename, 
-                                        n_frames=300, 
-                                        fps=15)
+                counter += 1
+                if save_meshes and counter % n_step == 0:
+                    # print("Saving recon'd mesh turntables")
+                    save_comparison_turntable(recovered_mesh, 
+                                            gt_mesh_pv, 
+                                            eval_path /"surfaces/invert_deltas"/filename, 
+                                            n_frames=300, 
+                                            fps=15)
+                #compute hausdorff distance
+                print("Calculating symmetric haussdorff distance")
+                rec_step_hausdorff = compute_haussdorff_distance(pv_mesh1=gt_mesh_pv, pv_mesh2=recovered_mesh)
+                series_stats_dict['rec_step_hausdorffs'].append(rec_step_hausdorff)
 
-    plot_eval_series(gt_sequence, 
-                      single_step_preds, 
-                      recursive_preds, 
-                      losses, 
-                      dev_losses, 
-                      recursive_losses, 
-                      n_step=n_step, 
-                      max_cols=7,
+            if idx + 1 < series_end_idx:
+                print("Transforming to next frame..........")     
+                #Transform into next frame reference
+                x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
+                x_rec_transformed = transform_points(x_rec_world, rotations[idx + 1], positions[idx + 1])
+                x_recursive = torch.tensor(x_rec_transformed, dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+            
+        #save everything again
+        all_stats_dict['all_gt_steps'].append(series_stats_dict['gt_steps'])
+        all_stats_dict['all_one_step_preds'].append(series_stats_dict['one_step_preds'])
+        all_stats_dict['all_rec_step_preds'].append(series_stats_dict['rec_step_preds'])
+        all_stats_dict['all_one_step_dist_means'].append(series_stats_dict['one_step_dist_means'])
+        all_stats_dict['all_one_step_dist_stds'].append(series_stats_dict['one_step_dist_stds'])
+        all_stats_dict['all_one_step_dist_95pct_means'].append(series_stats_dict['one_step_dist_95pct_means'])
+        all_stats_dict['all_one_step_dist_95pct_stds'].append(series_stats_dict['one_step_dist_95pct_stds'])
+        all_stats_dict['all_one_step_mses'].append(series_stats_dict['one_step_mses'])
+        all_stats_dict['all_rec_step_dist_means'].append(series_stats_dict['rec_step_dist_means'])
+        all_stats_dict['all_rec_step_dist_stds'].append(series_stats_dict['rec_step_dist_stds'])
+        all_stats_dict['all_rec_step_dist_95pct_means'].append(series_stats_dict['rec_step_dist_95pct_means'])
+        all_stats_dict['all_rec_step_dist_95pct_stds'].append(series_stats_dict['rec_step_dist_95pct_stds'])
+        all_stats_dict['all_rec_step_mses'].append(series_stats_dict['rec_step_mses'])
+        all_stats_dict['all_rec_step_chamfers'].append(series_stats_dict['rec_step_chamfers'])
+        all_stats_dict['all_rec_step_hausdorffs'].append(series_stats_dict['rec_step_hausdorffs'])
+
+    
+    plot_eval_series(all_stats_dict,
+                      mode='loss',
+                      max_cols=max_cols,
+                      n_step=n_step,
+                      fill_variation=True,
+                      add_chamfer=add_chamfer,
+                      add_hausdorff=add_hausdorff,
                       fig_path=eval_path/"eval_series.png")
     
-    return recursive_preds
 
+def eval_time(config, trainer):
+    import timeit
+    import torch
 
+    #NOTE: if data is randomly seeded the losses between iterations may be higher than expected
+    data_path = config["datasets"]["data_out"]
+    assert os.path.exists(data_path), "Dataset found"
+    data  = np.load(data_path, allow_pickle=True)
+    states = data['coords_t']
+    action_features = config["network"]["action_features"]
+
+    actions = actions_from_feature_map(action_features, data)
+    x_sample = torch.tensor(states[0], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+    a_sample = torch.tensor(actions[0], dtype=torch.float32).unsqueeze(0).to(trainer.device)
+    output_folder = Path(config["run"]["run_folder"])
+    trainer.load(model_path = output_folder / "best_model.pth")
+    trainer.net.eval()
+    
+    def forward(x, a):
+        with torch.no_grad():
+            return(trainer.net(x_t=x, a_t=a))
+    def benchmark_step():
+        if trainer.device.type == 'cuda':
+            torch.cuda.synchronize()
+        
+        with torch.no_grad():
+            forward(x_sample, a_sample)
+        
+        if trainer.device.type == 'cuda':
+            torch.cuda.synchronize()
+
+    runs = 10_000
+    total_time = timeit.timeit(benchmark_step, number=runs)
+    avg_time_ms = (total_time / runs) * 1000
+
+    print(f"Forward pass avg time over {runs} runs: {avg_time_ms:.4f} ms")
+    print(f"Total time for {runs} deformations: {total_time:.4f} ms")
 
 if __name__ == "__main__":
     #Evaluate an existing trained model
@@ -204,5 +361,9 @@ if __name__ == "__main__":
     from main import make_dataloaders
     train_loader, test_loader = make_dataloaders(config)
     trainer = Trainer(config, train_loader, log_to_tb=False)
-    evaluate(config, trainer)
-    evaluate_series(config, trainer)
+    # evaluate(config, trainer)
+    evaluate_series(config, trainer,
+                    add_chamfer=True, add_hausdorff=True,
+                    num_series=1, min_series_length=75, 
+                    n_step=15, max_cols=6, save_meshes=False)
+    # eval_time(config, trainer)
