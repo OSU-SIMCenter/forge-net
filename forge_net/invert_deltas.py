@@ -139,7 +139,7 @@ def save_comparison_turntable(pred_mesh, gt_mesh, output_path, n_frames=150, fps
 
 if __name__ == "__main__":
 
-    from model.trainer import Trainer
+    from model.trainer import ForgeNetTrainer
     from utils.utils import * 
     import yaml
 
@@ -150,7 +150,7 @@ if __name__ == "__main__":
         config = yaml.safe_load(file)
     from main import make_dataloaders
     train_loader, test_loader = make_dataloaders(config)
-    trainer = Trainer(config, train_loader, log_to_tb=False)
+    trainer = ForgeNetTrainer(config, train_loader, log_to_tb=False)
     
     data_path = config["datasets"]["data_out"]
     assert os.path.exists(data_path), "Dataset found"

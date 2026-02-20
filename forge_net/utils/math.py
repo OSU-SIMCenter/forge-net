@@ -1,51 +1,10 @@
-import numpy as np
 import pyvista as pv
-import open3d as o3d
-from pathlib import Path
+import math
+import numpy as np
+from scipy.sparse import coo_matrix, vstack, eye
+from scipy.sparse.linalg import lsqr
 import math
 from scipy.spatial.transform import Rotation
-
-class MeshContainer:
-    def __init__(self, vertices, triangles):
-        self.vertices = np.array(vertices).reshape(-1, 3)
-        self.triangles = np.array(triangles).reshape(-1, 3)
-
-    @classmethod
-    def from_db(cls, vertices, triangles):
-        return cls(vertices, triangles)
-
-def meshcontainer_to_pv(mesh):
-    """
-    Convert a MeshContainer instance to a PyVista PolyData mesh.
-    mesh: MeshContainer with .vertices (N, 3) and .triangles (M, 3)
-    """
-    n_faces = len(mesh.triangles)
-    face_array = np.hstack([
-        np.full((n_faces, 1), 3),
-        mesh.triangles
-    ]).astype(np.int64)
-
-    return pv.PolyData(mesh.vertices, face_array)
-
-def get_project_root() -> Path:
-    return Path(__file__).parent.parent
-
-ROOT = get_project_root()
-
-def get_datasets_path() -> Path:
-    return(ROOT / 'data' / 'datasets')
-
-def get_models_path() -> Path:
-    return(ROOT / 'model' / 'saved_models')
-
-def actions_from_feature_map(action_features, data):
-    # Define all possible features
-    feature_map = {
-        "steps": lambda: data['steps'],
-        "positions": lambda: data['positions'][:, 0].reshape(-1, 1), #if positions we only care about translation in X
-        "rotations": lambda: np.array([[quat_to_eulerxyz(quat)[0]] for quat in data['rotations']]) #if rotations we only care about rotation about x
-    }
-    return np.hstack([feature_map[f]() for f in action_features])
 
 def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array = None, seed: int = None) -> tuple[np.array, np.array, np.array]:
     '''
@@ -185,10 +144,6 @@ def triangle_mask_from_window(mesh: pv.PolyData, center: float, window_length: f
     
     return mask, bounds
 
-import numpy as np
-from scipy.sparse import coo_matrix, vstack, eye
-from scipy.sparse.linalg import lsqr
-
 def get_graph_laplacian(mesh):
     num_vertices = mesh.n_points
     faces = mesh.regular_faces  # Shape (N, 3)
@@ -266,18 +221,8 @@ def normalize_points(points):
     point_max = np.max(points, axis=0)
     return( (points - point_min) / (point_max - point_min) )
 
-def pyvista_to_open3d(pv_mesh):
-
-    vertices = pv_mesh.points
-    faces = pv_mesh.faces.reshape(-1, 4)[:, 1:]
-    o3d_mesh = o3d.geometry.TriangleMesh()
-    o3d_mesh.vertices = o3d.utility.Vector3dVector(vertices)
-    o3d_mesh.triangles = o3d.utility.Vector3iVector(faces)
-        
-    return o3d_mesh
-
 def compute_haussdorff_distance(pv_mesh1, pv_mesh2, samples=1000):
-    
+    from forge_net.utils.common import pyvista_to_open3d
     mesh1 = pyvista_to_open3d(pv_mesh1)
     mesh2 = pyvista_to_open3d(pv_mesh2)
     pcd1 = mesh1.sample_points_uniformly(number_of_points=samples)
@@ -304,4 +249,3 @@ def quat_to_eulerxyz(quaternion):
 
 def eulerxyz_to_quat(xyz_degtuple):
     return Rotation.from_euler('xyz',xyz_degtuple,degrees=True).as_quat()
-

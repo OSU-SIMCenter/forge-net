@@ -32,14 +32,15 @@ network:
   use_gpu: True
 
 run:
-  run_name: "mse_1024_unmasked_seeded_stateloss"
+  # run_name: "mse_1024_unmasked_seeded_stateloss"
+  run_name: "test_test"
   save_every: 50
   run_folder: ???
   # early stopping
   early_stop: False
   patience: 50
   min_delta: 1.0e-6
-  num_epochs: 200
+  num_epochs: 2200
 
 eval:
   eval_idxs: [1, 25, 115]

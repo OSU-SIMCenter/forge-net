@@ -1,52 +1,10 @@
-from pathlib import Path
-import numpy as np
 import yaml
-from forge_net.data.dataloaders import * 
-from forge_net.data.process_data import * 
-from forge_net.utils.utils import *
-from forge_net.model.trainer import Trainer
-from forge_net.eval import *
+from forge_net.data.process_data import make_dataloaders, make_dataset
+from forge_net.utils.common import get_project_root
+from forge_net.model.trainer import ForgeNetTrainer
+from forge_net.eval import evaluate, evaluate_series
 
-def make_dataset(config):
-    '''
-    Processes a SQLite database into a numpy npz which is compatible with pytorch dataloaders
-    '''
-    total_points, mask_points, seed, data_out = config['datasets'].values()
-
-    if Path(data_out).exists():
-        print("Datasets already exists skipping creation")
-        return
-    
-    db_path1, db_path2, lines = config['databases'].values()
-    print(db_path1, db_path2)
-    assert Path(db_path1).exists() and Path(db_path2).exists(), "Provided database paths do not exist check paths"
-    
-    data1 = n_extract_data(db_path1, total_points, lines, seed=seed, mask_points=mask_points, n_workers=128)
-    data2 = n_extract_data(db_path2, total_points, lines, seed=seed,  mask_points=mask_points, n_workers=128)
-    data = {key: np.concatenate((data1[key], data2[key]), axis=0) for key in data1.keys()}
-
-    np.savez(data_out, **data)
-    
-def make_dataloaders(config):
-    data_path = config["datasets"]["data_out"]
-    data = np.load(data_path)
-    c_t = data['coords_t']
-    c_tp1 = data['coords_tp1']
-    
-    action_features = config["network"]["action_features"]
-    # Build only what's in the config
-    actions = actions_from_feature_map(action_features, data)
- 
-    train_loader, test_loader = GetSingleStepDataLoaders(
-        coords_t=c_t,       
-        coords_tp1=c_tp1,
-        actions=actions,
-        batch_size=config["network"]["batch_size"]
-        )
-    
-    return(train_loader, test_loader)
-
-if __name__ == "__main__":
+def main():
 
     base_path = get_project_root()
     config_path = base_path / "configs" / "experiment_invert_deltas.yml"
@@ -59,7 +17,7 @@ if __name__ == "__main__":
 
     make_dataset(config=config)
     train_loader, test_loader = make_dataloaders(config)
-    trainer = Trainer(config, train_loader, test_loader)
+    trainer = ForgeNetTrainer(config, train_loader, test_loader)
     trainer.train()
     config = trainer.config # get any changes the trainer made to the config
     config["run"]["run_folder"] = str(run_folder) #yaml cannot dump Path Objects
@@ -67,5 +25,8 @@ if __name__ == "__main__":
         yaml.safe_dump(config, file)
     evaluate(config, trainer)
     evaluate_series(config, trainer)
+
+if __name__ == "__main__":
+    main()    
 
     

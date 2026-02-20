@@ -1,10 +1,15 @@
+from pathlib import Path
 import sqlite3
 import pandas as pd
 import numpy as np
 import json
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
-from forge_net.utils.utils import *
+
+from forge_net.data.dataloaders import GetSingleStepDataLoaders
+from forge_net.utils.common import actions_from_feature_map
+from forge_net.utils.common import MeshContainer, meshcontainer_to_pv
+from forge_net.utils.math import *
 
 def process_series(args):
     """Process a single series - this will run in parallel
@@ -225,3 +230,42 @@ def n_extract_data(db_path, total_points, lines, n_workers=None, mask_points=Non
         output[key] = arr
     
     return output
+
+def make_dataset(config):
+    '''
+    Processes a SQLite database into a numpy npz which is compatible with pytorch dataloaders
+    '''
+    total_points, mask_points, seed, data_out = config['datasets'].values()
+
+    if Path(data_out).exists():
+        print("Datasets already exists skipping creation")
+        return
+    
+    db_path1, db_path2, lines = config['databases'].values()
+    print(db_path1, db_path2)
+    assert Path(db_path1).exists() and Path(db_path2).exists(), "Provided database paths do not exist check paths"
+    
+    data1 = n_extract_data(db_path1, total_points, lines, seed=seed, mask_points=mask_points, n_workers=128)
+    data2 = n_extract_data(db_path2, total_points, lines, seed=seed,  mask_points=mask_points, n_workers=128)
+    data = {key: np.concatenate((data1[key], data2[key]), axis=0) for key in data1.keys()}
+
+    np.savez(data_out, **data)
+
+def make_dataloaders(config):
+    data_path = config["datasets"]["data_out"]
+    data = np.load(data_path)
+    c_t = data['coords_t']
+    c_tp1 = data['coords_tp1']
+    
+    action_features = config["network"]["action_features"]
+    # Build only what's in the config
+    actions = actions_from_feature_map(action_features, data)
+ 
+    train_loader, test_loader = GetSingleStepDataLoaders(
+        coords_t=c_t,       
+        coords_tp1=c_tp1,
+        actions=actions,
+        batch_size=config["network"]["batch_size"]
+        )
+    
+    return(train_loader, test_loader)

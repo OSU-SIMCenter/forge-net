@@ -10,3 +10,4 @@ To do list for getting paper published
 - [ ] Create timeline plot of hits GT vs pred using Chamfer Loss
 - [ ] Loss versus press_window - show learning rate (table for next unit of work)
 - [ ] Verify any differences between loss_fn(delta_t, delta_tp1) and loss_fn(x_t, x_tp1)
+- [ ] Need clearer separation of responsiblity in class design AND imports (don't import *)

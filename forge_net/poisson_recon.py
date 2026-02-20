@@ -62,7 +62,7 @@ def poisson_recon_turntables(pc_data, output_path, n_frames=30):
 
 if __name__ == "__main__":
     #Evaluate an existing trained model
-    from model.trainer import Trainer
+    from model.trainer import ForgeNetTrainer
     from utils.utils import * 
     import yaml
 
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         config = yaml.safe_load(file)
     from main import make_dataloaders
     train_loader, test_loader = make_dataloaders(config)
-    trainer = Trainer(config, train_loader, log_to_tb=False)
+    trainer = ForgeNetTrainer(config, train_loader, log_to_tb=False)
     
     recursive_preds = evaluate_series(config, trainer)
     output_folder = Path(config["run"]["run_folder"])

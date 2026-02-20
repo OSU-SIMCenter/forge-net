@@ -1,6 +1,7 @@
 from pathlib import Path
 import torch
-from forge_net.utils.utils import *
+from forge_net.utils.common import *
+from forge_net.utils.math import *
 from forge_net.utils.plotting import * 
 from forge_net.invert_deltas import invert_deltas_to_mesh, save_comparison_turntable
 from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
@@ -113,13 +114,6 @@ def evaluate_series(config, trainer, num_series, min_series_length,
     rotations = data['rotations']
 
     actions = actions_from_feature_map(action_features, data)
-
-    output_folder = Path(config["run"]["run_folder"])
-    eval_path = output_folder / "eval"
-    eval_path.mkdir(exist_ok=True)
-
-    trainer.load(model_path = output_folder / "best_model.pth")
-    trainer.net.eval()
     
     def forward(x, a):
         with torch.no_grad():
@@ -346,8 +340,7 @@ def eval_time(config, trainer):
 
 if __name__ == "__main__":
     #Evaluate an existing trained model
-    from model.trainer import Trainer
-    from utils.utils import * 
+    from forge_net.model.trainer import ForgeNetTrainer
     import yaml
 
     base_path = get_project_root()
@@ -357,7 +350,13 @@ if __name__ == "__main__":
         config = yaml.safe_load(file)
     from main import make_dataloaders
     train_loader, test_loader = make_dataloaders(config)
-    trainer = Trainer(config, train_loader, log_to_tb=False)
+    trainer = ForgeNetTrainer(config, train_loader, log_to_tb=False)
+    output_folder = Path(config["run"]["run_folder"])
+    eval_path = output_folder / "eval"
+    eval_path.mkdir(exist_ok=True)
+
+    trainer.load(model_path = output_folder / "best_model.pth")
+    trainer.net.eval()
     # evaluate(config, trainer)
     evaluate_series(config, trainer,
                     add_chamfer=True, add_hausdorff=False,

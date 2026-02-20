@@ -4,9 +4,9 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-from forge_net.model.model import * 
-from forge_net.utils.plotting import * 
-from forge_net.utils.utils import * 
+from forge_net.model.model import ForgeNet
+from forge_net.utils.plotting import plot_loss
+# from forge_net.utils.common import 
 
 def l1_penalty(net):
     l1_loss = 0.0
@@ -17,7 +17,7 @@ def l1_penalty(net):
 
 from torch.utils.tensorboard import SummaryWriter
 
-class Trainer:
+class ForgeNetTrainer:
    
     def __init__(self, config, train_loader=None, test_loader=None, 
     resume_epoch=0, resume_best_loss=None, log_to_tb=True):
