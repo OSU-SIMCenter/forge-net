@@ -38,6 +38,8 @@ import os
 from eval import evaluate, forward
 from main import make_dataloaders
 
+import pysplashsurf as splashsurf
+
 
 # ---------------------------
 # Data model (incoming)
@@ -121,8 +123,16 @@ def handle_update(req: ClientRequest) -> Tuple[np.ndarray, np.ndarray, bool]:
 
 
     faces = np.array(np.random.randint(0, 100, size=(1, 600)), dtype=np.int32)
+
+    result = splashsurf.reconstruct_surface(
+        vertices,
+        particle_radius=0.5,
+        smoothing_length=2,
+        cube_size=0.5
+    )
+
     is_pressing = False
-    return vertices, faces, is_pressing
+    return result.mesh.vertices, result.mesh.triangles, is_pressing
 
 
 def handle_strike(req: ClientRequest) -> None:
