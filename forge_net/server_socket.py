@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import List, Tuple, Optional
 
 import numpy as np
+import pyvista as pv
 import websockets
 from websockets.server import WebSocketServerProtocol
 
@@ -49,6 +50,7 @@ import pysplashsurf as splashsurf
 class ClientRequest:
     request: str
     vertices: np.ndarray
+    triangles: np.ndarray
     translation: float
     rotation: float
     force: float
@@ -64,6 +66,7 @@ class ClientRequest:
         return ClientRequest(
             request=str(obj.get("request", "")),
             vertices=vertices,
+            triangles=obj.get("triangles", []),
             translation=float(obj.get("translation", 0.0)),
             rotation=float(obj.get("rotation", 0.0)),
             force=float(obj.get("force", 0.0)),
@@ -97,17 +100,33 @@ def handle_update(req: ClientRequest) -> Tuple[np.ndarray, np.ndarray, bool]:
     #     dtype=np.float32
     # )
 
-
     # most of this should happen in initialization instead of every strike
     base_path = get_project_root()
-    run_name = "mse_1024_unmaksed_seeded_w_tri_ids"
+    run_name = "mse_1024_unmasked"
     config_path = base_path / "runs" / run_name / "config_out.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     trainer = Trainer(config, log_to_tb=False)
     # evaluate(config, trainer)
     batch_size = 2  # Set batch size to 2 or more
-    states = np.ones((batch_size, 3, 1000))  # Shape: (B, C, N)
+    
+    vertices_reshaped = req.vertices.reshape(-1, 3).astype(np.float32)
+
+    triangles_flat = np.asarray(req.triangles, dtype=np.int64)
+    assert triangles_flat.size % 3 == 0
+
+    triangles_reshaped = triangles_flat.reshape(-1, 3)
+    n_triangles = triangles_reshaped.shape[0]
+
+    faces = np.hstack([
+        np.full((n_triangles, 1), 3, dtype=np.int64),
+        triangles_reshaped
+    ]).flatten()
+
+    pv_mesh = pv.PolyData(vertices_reshaped, faces)
+
+    states, _, _ = barycentric_sampling(pv_mesh, num_points=1000)
+
     states = torch.tensor(states, dtype=torch.float32)
 
     action_dims = config["network"]["action_dims"]
@@ -117,16 +136,13 @@ def handle_update(req: ClientRequest) -> Tuple[np.ndarray, np.ndarray, bool]:
 
 
     if tensor.dim() == 3:
-        tensor = tensor[0]
-    vertices = tensor.detach().cpu().numpy()
-    vertices.astype(np.float32).reshape(-1)
-
-
-    faces = np.array(np.random.randint(0, 100, size=(1, 600)), dtype=np.int32)
+        tensor = tensor[0]  # Get first batch: (3, 1000)
+    deltas = tensor.detach().cpu().numpy()  # Shape: (3, 1000)
+    deltas = deltas.transpose(1, 0).astype(np.float32)  # Reshape to (1000, 3)
 
     result = splashsurf.reconstruct_surface(
-        vertices,
-        particle_radius=0.5,
+        req.vertices + deltas,
+        particle_radius=0.05,
         smoothing_length=2,
         cube_size=0.5
     )
@@ -193,6 +209,7 @@ def make_binary_reply(vertices_f32_flat: np.ndarray,
 
 async def client_handler(ws: WebSocketServerProtocol):
     print(f"[connect] {ws.remote_address}")
+
     try:
         async for message in ws:
             # Unity uses SendText, so expect str. If bytes arrive, ignore or handle.
