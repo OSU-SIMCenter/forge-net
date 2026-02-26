@@ -11,8 +11,8 @@ Unity sends: JSON text
 Server replies: binary
   [headerLen (4 bytes, little-endian uint32)]
   [header JSON (UTF-8, headerLen bytes)]
-  [vertices (float32 LE, count = counts["vertices"])]
-  [faces (int32 LE, count = counts["faces"])]
+  [vertices (float32 LE)]
+  [faces (int32 LE)]
 """
 
 import asyncio
@@ -25,7 +25,6 @@ import numpy as np
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from pathlib import Path
 import torch
 from forge_net.utils.utils import *
 from model.trainer import Trainer
@@ -37,7 +36,7 @@ import pysplashsurf as splashsurf
 
 
 # ---------------------------
-# Data model (incoming)
+# Data model
 # ---------------------------
 
 @dataclass
@@ -53,13 +52,10 @@ class ClientRequest:
     def from_json(s: str) -> "ClientRequest":
         obj = json.loads(s)
 
-        vertices = np.asarray(obj.get("vertices", []), dtype=np.float32)
-        triangles = np.asarray(obj.get("triangles", []), dtype=np.int32)
-
         return ClientRequest(
             request=str(obj.get("request", "")),
-            vertices=vertices,
-            triangles=triangles,
+            vertices=np.asarray(obj.get("vertices", []), dtype=np.float32),
+            triangles=np.asarray(obj.get("triangles", []), dtype=np.int32),
             translation=float(obj.get("translation", 0.0)),
             rotation=float(obj.get("rotation", 0.0)),
             force=float(obj.get("force", 0.0)),
@@ -67,51 +63,82 @@ class ClientRequest:
 
 
 # ---------------------------
-# Application logic
+# Update logic
 # ---------------------------
 
-def handle_update(req: ClientRequest, trainer: Trainer) -> Tuple[np.ndarray, np.ndarray, bool]:
-    """
-    Return (vertices, faces, is_pressing)
-    """
+def handle_update(
+    req: ClientRequest,
+    trainer: Trainer,
+    cache: dict
+) -> Tuple[np.ndarray, np.ndarray, bool]:
 
     vertices_reshaped = req.vertices.reshape(-1, 3).astype(np.float32)
     triangles = req.triangles.reshape(-1, 3).astype(np.int32)
 
-    # Barycentric sampling
-    states, tri_ids, bary = barycentric_sampling(
-        vertices_reshaped,
-        triangles,
-        num_points=1000
-    )
+    # -----------------------------------------
+    # First hit → compute barycentric sampling
+    # -----------------------------------------
+    if cache["tri_ids"] is None:
 
-    # Convert to tensor
-    states = torch.tensor(states, dtype=torch.float32).unsqueeze(0)  # (1, N, 3)
-    states = states.permute(0, 2, 1)  # (1, 3, N)
+        states, tri_ids, bary = barycentric_sampling(
+            vertices_reshaped,
+            triangles,
+            num_points=1000
+        )
 
-    # Prepare dummy action
-    batch_size = states.shape[0]
+        cache["tri_ids"] = tri_ids
+        cache["bary"] = bary
+        cache["base_vertices"] = vertices_reshaped.copy()
+
+    # -----------------------------------------
+    # Subsequent hits → reuse bary coords
+    # -----------------------------------------
+    else:
+        tri_ids = cache["tri_ids"]
+        bary = cache["bary"]
+        base_vertices = cache["base_vertices"]
+
+        # Reconstruct sampled points from original mesh
+        v0 = base_vertices[triangles[tri_ids, 0]]
+        v1 = base_vertices[triangles[tri_ids, 1]]
+        v2 = base_vertices[triangles[tri_ids, 2]]
+
+        states = (
+            bary[:, 0:1] * v0 +
+            bary[:, 1:2] * v1 +
+            bary[:, 2:3] * v2
+        )
+
+    # -----------------------------------------
+    # Neural net forward
+    # -----------------------------------------
+    states_tensor = torch.tensor(states, dtype=torch.float32).unsqueeze(0)
+    states_tensor = states_tensor.permute(0, 2, 1)
+
+    batch_size = states_tensor.shape[0]
     action_dims = trainer.config["network"]["action_dims"]
     steps = torch.ones((batch_size, action_dims), dtype=torch.float32)
 
-    # Forward pass
     trainer.net.eval()
-    tensor = forward(trainer, states, steps)
+    tensor = forward(trainer, states_tensor, steps)
 
     if tensor.dim() == 3:
-        tensor = tensor[0]
+        tensor = tensor[0]  # (3, N)
 
-    deltas = tensor.detach().cpu().numpy().transpose(1, 0).astype(np.float32)
+    deltas = tensor.detach().cpu().numpy()
 
-    deformed_points = states.detach().cpu().numpy()
+    # Ensure shape is (N, 3)
+    if deltas.shape[0] == 3:
+        deltas = deltas.T
 
-    if deformed_points.ndim == 3:
-        deformed_points = deformed_points[0]
+    deltas = deltas.astype(np.float32)
 
-    if deformed_points.shape[0] == 3:
-        deformed_points = deformed_points.T
+    # Apply deformation
+    deformed_points = states + deltas / 100
 
+    # -----------------------------------------
     # Surface reconstruction
+    # -----------------------------------------
     result = splashsurf.reconstruct_surface(
         deformed_points.astype(np.float32),
         particle_radius=0.05,
@@ -119,38 +146,19 @@ def handle_update(req: ClientRequest, trainer: Trainer) -> Tuple[np.ndarray, np.
         cube_size=0.5
     )
 
-    triangles = result.mesh.triangles
-    triangles[:, [1, 2]] = triangles[:, [2, 1]]  # invert normals
+    triangles_out = result.mesh.triangles
+    triangles_out[:, [1, 2]] = triangles_out[:, [2, 1]]  # invert normals
 
-    vertices = result.mesh.vertices
+    vertices_out = result.mesh.vertices
 
-    is_pressing = False
-    return vertices, triangles, is_pressing
-
-
-def handle_strike(req: ClientRequest) -> None:
-    return
-
-
-def handle_heat(req: ClientRequest) -> None:
-    return
-
-
-def handle_reset(req: ClientRequest) -> None:
-    return
-
-
-def handle_undo(req: ClientRequest) -> None:
-    return
+    return vertices_out, triangles_out, False
 
 
 # ---------------------------
-# Binary protocol packing
+# Binary protocol
 # ---------------------------
 
-def make_binary_reply(vertices: np.ndarray,
-                      faces: np.ndarray,
-                      is_pressing: bool) -> bytes:
+def make_binary_reply(vertices, faces, is_pressing):
 
     v = np.ascontiguousarray(vertices.flatten(), dtype=np.float32)
     f = np.ascontiguousarray(faces.flatten(), dtype=np.int32)
@@ -165,51 +173,41 @@ def make_binary_reply(vertices: np.ndarray,
 
     header_json = json.dumps(header_obj, separators=(",", ":")).encode("utf-8")
     prefix = struct.pack("<I", len(header_json))
-
     body = v.tobytes(order="C") + f.tobytes(order="C")
+
     return prefix + header_json + body
 
 
 # ---------------------------
-# WebSocket server
+# WebSocket handler
 # ---------------------------
 
 async def client_handler(ws: WebSocketServerProtocol, trainer: Trainer):
+
     print(f"[connect] {ws.remote_address}")
+
+    # Per-connection cache
+    cache = {
+        "tri_ids": None,
+        "bary": None,
+        "base_vertices": None,
+    }
 
     try:
         async for message in ws:
+
             if isinstance(message, bytes):
-                print("[warn] unexpected binary message")
                 continue
 
             req = ClientRequest.from_json(message)
 
-            if req.request == "update":
-                vertices, faces, is_pressing = handle_update(req, trainer)
+            vertices, faces, is_pressing = handle_update(
+                req,
+                trainer,
+                cache
+            )
 
-            elif req.request == "strike":
-                handle_strike(req)
-                vertices, faces, is_pressing = handle_update(req, trainer)
-
-            elif req.request == "heat":
-                handle_heat(req)
-                vertices, faces, is_pressing = handle_update(req, trainer)
-
-            elif req.request == "reset":
-                handle_reset(req)
-                vertices, faces, is_pressing = handle_update(req, trainer)
-
-            elif req.request == "undo":
-                handle_undo(req)
-                vertices, faces, is_pressing = handle_update(req, trainer)
-
-            else:
-                print(f"[warn] unknown request: {req.request}")
-                vertices, faces, is_pressing = handle_update(req, trainer)
-
-            reply = make_binary_reply(vertices, faces, is_pressing)
-            await ws.send(reply)
+            await ws.send(make_binary_reply(vertices, faces, is_pressing))
 
     except websockets.ConnectionClosed:
         pass
@@ -223,7 +221,7 @@ async def client_handler(ws: WebSocketServerProtocol, trainer: Trainer):
 # Main
 # ---------------------------
 
-async def main(host: str = "localhost", port: int = 8765):
+async def main(host="localhost", port=8765):
 
     base_path = get_project_root()
     run_name = "mse_1024_unmasked"
