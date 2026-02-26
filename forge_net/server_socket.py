@@ -41,6 +41,9 @@ from main import make_dataloaders
 
 import pysplashsurf as splashsurf
 
+# evil and intimidating global variable
+barycentric_points = None
+
 
 # ---------------------------
 # Data model (incoming)
@@ -112,10 +115,22 @@ def handle_update(req: ClientRequest) -> Tuple[np.ndarray, np.ndarray, bool]:
     
     vertices_reshaped = req.vertices.reshape(-1, 3).astype(np.float32)
 
-    triangles_flat = np.asarray(req.triangles, dtype=np.int64)
-    assert triangles_flat.size % 3 == 0
+    triangles = np.array(req.triangles, dtype=np.int32)
 
-    triangles_reshaped = triangles_flat.reshape(-1, 3)
+    if triangles.ndim == 1:
+        # flat buffer
+        assert triangles.size % 3 == 0
+        triangles = triangles.reshape(-1, 3)
+
+    elif triangles.ndim == 2:
+        assert triangles.shape[1] == 3, f"Triangles shape is {triangles.shape}"
+
+    else:
+        raise ValueError(f"Unexpected triangles shape: {triangles.shape}")
+
+    assert triangles.size % 3 == 0
+
+    triangles_reshaped = triangles.reshape(-1, 3)
     n_triangles = triangles_reshaped.shape[0]
 
     faces = np.hstack([
@@ -123,15 +138,29 @@ def handle_update(req: ClientRequest) -> Tuple[np.ndarray, np.ndarray, bool]:
         triangles_reshaped
     ]).flatten()
 
-    pv_mesh = pv.PolyData(vertices_reshaped, faces)
+    vertices_reshaped = req.vertices.reshape(-1, 3).astype(np.float32)
 
-    states, _, _ = barycentric_sampling(pv_mesh, num_points=1000)
+    triangles = np.asarray(req.triangles, dtype=np.int32).reshape(-1, 3)
 
-    states = torch.tensor(states, dtype=torch.float32)
+    states, tri_ids, bary = barycentric_sampling(
+        vertices_reshaped,
+        triangles,
+        num_points=1000
+    )
 
+    # Convert to tensor and add batch dim
+    states = torch.tensor(states, dtype=torch.float32).unsqueeze(0)  # (1, 1000, 3)
+
+    # Permute to (B, C, N) for Conv1d
+    states = states.permute(0, 2, 1)  # (1, 3, 1000)
+
+    # Prepare actions
+    batch_size = states.shape[0]
     action_dims = config["network"]["action_dims"]
-    steps = np.ones((batch_size, action_dims))  # Shape: (B, action_dims)
-    steps = torch.tensor(steps, dtype=torch.float32)
+    steps = torch.ones((batch_size, action_dims), dtype=torch.float32)
+
+    # Forward pass
+    trainer.net.eval()
     tensor = forward(trainer, states, steps)
 
 
@@ -140,15 +169,39 @@ def handle_update(req: ClientRequest) -> Tuple[np.ndarray, np.ndarray, bool]:
     deltas = tensor.detach().cpu().numpy()  # Shape: (3, 1000)
     deltas = deltas.transpose(1, 0).astype(np.float32)  # Reshape to (1000, 3)
 
+    deformed_points = states.numpy()
+
+    # deformed_points currently torch, shape (1, 3, N) or (N,3)
+    # Convert to numpy and correct shape
+    if isinstance(deformed_points, torch.Tensor):
+        deformed_points = deformed_points.detach().cpu().numpy()
+
+    # If batch dimension exists, remove it
+    if deformed_points.ndim == 3:
+        # Assume shape (B, N, 3) or (B, 3, N)
+        deformed_points = deformed_points[0]  # first batch
+
+    # If channels first, permute to (N,3)
+    if deformed_points.shape[0] == 3:
+        deformed_points = deformed_points.T  # (N,3)
+
+    # Now call pysplashsurf
     result = splashsurf.reconstruct_surface(
-        req.vertices + deltas,
+        deformed_points.astype(np.float32),
         particle_radius=0.05,
-        smoothing_length=2,
+        smoothing_length=5,
         cube_size=0.5
     )
 
+    # triangles: shape (num_triangles, 3)
+    triangles = result.mesh.triangles
+
+    # Swap the last two indices in each triangle to invert normals
+    triangles[:, [1, 2]] = triangles[:, [2, 1]]
+    
+
     is_pressing = False
-    return result.mesh.vertices, result.mesh.triangles, is_pressing
+    return result.mesh.vertices, triangles, is_pressing
 
 
 def handle_strike(req: ClientRequest) -> None:

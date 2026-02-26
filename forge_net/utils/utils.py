@@ -38,70 +38,58 @@ def get_datasets_path() -> Path:
 def get_models_path() -> Path:
     return(ROOT / 'model' / 'saved_models')
 
-def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array = None) -> tuple[np.array, np.array, np.array]:
-    '''
-    Returns sampled points and their barycentric information.
-    
-    Returns:
-        points: (N, 3) sampled point positions
-        triangle_ids: (N,) which triangle each point belongs to (in original mesh indexing)
-        barycentric_coords: (N, 3) barycentric coordinates (b0, b1, b2)
-    '''
-    mesh = mesh.compute_cell_sizes()
-    triangles = mesh.regular_faces
-    triangle_areas = mesh.cell_data["Area"]
-    points = mesh.points
-    
-    # Store original triangle indices before masking
-    original_tri_indices = np.arange(len(triangles))
-    
-    if tri_mask is not None:
-        triangles = triangles[tri_mask]
-        triangle_areas = triangle_areas[tri_mask]
-        original_tri_indices = original_tri_indices[tri_mask]
-        total_area = np.sum(triangle_areas)
-    else:
-        total_area = mesh.area
-    
-    num_triangles = len(triangle_areas)
-    assert num_triangles > 0, "Triangle mask is empty"
-    
-    point_translations = []
-    point_triangle_ids = []  # Indices into masked triangles
-    
-    for i in range(num_triangles):
-        for _ in range(math.floor(triangle_areas[i] / total_area * num_points)):
-            point_translations.append([np.random.random(), np.random.random()])
-            point_triangle_ids.append(i)
-    
-    for i in range(num_points - len(point_translations)):
-        point_translations.append([np.random.random(), np.random.random()])
-        point_triangle_ids.append(np.random.randint(0, num_triangles))
-    
-    # Compute points and barycentric coordinates
-    sampled_points = []
-    barycentric_coords = []
-    global_triangle_ids = []
-    
-    for i in range(len(point_triangle_ids)):
-        tri_id = point_triangle_ids[i]
-        idx0, idx1, idx2 = triangles[tri_id]
-        
-        v0 = points[idx0] # A
-        v1 = points[idx1] # B
-        v2 = points[idx2] # C
-        
-        r0, r1 = point_translations[i]
-        b0 = 1 - math.sqrt(r0)
-        b1 = math.sqrt(r0) * (1 - r1)
-        b2 = r1 * math.sqrt(r0)
-        
-        point = (b0 * v0) + (b1 * v1) + (b2 * v2)
-        sampled_points.append(point)
-        barycentric_coords.append([b0, b1, b2])
-        global_triangle_ids.append(original_tri_indices[tri_id])
-    
-    return np.array(sampled_points), np.array(global_triangle_ids), np.array(barycentric_coords)
+import numpy as np
+
+def barycentric_sampling(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    num_points: int,
+):
+    """
+    vertices: (V,3)
+    triangles: (T,3)
+    returns:
+        sampled_points: (N,3)
+        triangle_ids: (N,)
+        barycentric_coords: (N,3)
+    """
+
+    # --- gather triangle vertices ---
+    v0 = vertices[triangles[:, 0]]
+    v1 = vertices[triangles[:, 1]]
+    v2 = vertices[triangles[:, 2]]
+
+    # --- compute triangle areas ---
+    cross = np.cross(v1 - v0, v2 - v0)
+    areas = 0.5 * np.linalg.norm(cross, axis=1)
+
+    probs = areas / areas.sum()
+
+    # --- randomly choose triangles weighted by area ---
+    tri_ids = np.random.choice(len(triangles), size=num_points, p=probs)
+
+    # --- sample barycentric coords ---
+    r = np.random.rand(num_points, 2)
+    sqrt_r0 = np.sqrt(r[:, 0])
+
+    b0 = 1 - sqrt_r0
+    b1 = sqrt_r0 * (1 - r[:, 1])
+    b2 = sqrt_r0 * r[:, 1]
+
+    # --- gather chosen triangle vertices ---
+    v0_sel = v0[tri_ids]
+    v1_sel = v1[tri_ids]
+    v2_sel = v2[tri_ids]
+
+    sampled_points = (
+        b0[:, None] * v0_sel +
+        b1[:, None] * v1_sel +
+        b2[:, None] * v2_sel
+    )
+
+    bary = np.stack([b0, b1, b2], axis=1)
+
+    return sampled_points.astype(np.float32), tri_ids, bary.astype(np.float32)
 
 def update_barycentric_points(deformed_mesh: pv.PolyData, triangle_ids: np.array, barycentric_coords: np.array) -> np.array:
     '''
