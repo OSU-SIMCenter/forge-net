@@ -82,7 +82,8 @@ def make_dataloaders(config):
 if __name__ == "__main__":
 
     base_path = get_project_root()
-    config_path = base_path / "runs" / "mse_1024_unmaksed_seeded_w_tri_ids" / "config_out.yml"
+    config_path = "/Users/jonahsagers/Documents/GitHub/forge-net/forge_net/runs/mse_1024_unmasked/config_out.yml"
+    
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     

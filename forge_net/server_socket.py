@@ -72,52 +72,56 @@ def handle_update(
     cache: dict
 ) -> Tuple[np.ndarray, np.ndarray, bool]:
 
-    vertices_reshaped = req.vertices.reshape(-1, 3).astype(np.float32)
+    vertices_input = req.vertices.reshape(-1, 3).astype(np.float32)
+
     triangles = req.triangles.reshape(-1, 3).astype(np.int32)
 
-    # -----------------------------------------
-    # First hit → compute barycentric sampling
-    # -----------------------------------------
-    if cache["tri_ids"] is None:
+    # --------------------------------------------------
+    # FIRST HIT → compute barycentric sampling once
+    # --------------------------------------------------
+    if cache["bary"] is None:
+        vertices_input[:, [1, 2]] = vertices_input[:, [2, 1]]
+
+        vertices_input[:, 0] *= 4.0
+        vertices_input[:, 1] *= 4.0
+        vertices_input[:, 2] *= 4.0
 
         states, tri_ids, bary = barycentric_sampling(
-            vertices_reshaped,
+            vertices_input,
             triangles,
             num_points=1000
         )
 
-        cache["tri_ids"] = tri_ids
-        cache["bary"] = bary
-        cache["base_vertices"] = vertices_reshaped.copy()
+        
 
-    # -----------------------------------------
-    # Subsequent hits → reuse bary coords
-    # -----------------------------------------
-    else:
-        tri_ids = cache["tri_ids"]
-        bary = cache["bary"]
-        base_vertices = cache["base_vertices"]
+        cache["bary"] = states
 
-        # Reconstruct sampled points from original mesh
-        v0 = base_vertices[triangles[tri_ids, 0]]
-        v1 = base_vertices[triangles[tri_ids, 1]]
-        v2 = base_vertices[triangles[tri_ids, 2]]
+    # --------------------------------------------------
+    # SUBSEQUENT HITS → reuse bary coords
+    # --------------------------------------------------
 
-        states = (
-            bary[:, 0:1] * v0 +
-            bary[:, 1:2] * v1 +
-            bary[:, 2:3] * v2
-        )
+    states = cache["bary"]
 
-    # -----------------------------------------
-    # Neural net forward
-    # -----------------------------------------
+
+    translation = np.mean(states[:, 0], axis=0)
+
+    states[:, 0] -= translation
+
+    print("min_x: ", np.min(states[:, 0], axis=0))
+
+    print("average_x: ", np.mean(states[:, 0], axis=0))
+
+    print("max_x: ", np.max(states[:, 0], axis=0))
+
+    # --------------------------------------------------
+    # Neural network forward
+    # --------------------------------------------------
     states_tensor = torch.tensor(states, dtype=torch.float32).unsqueeze(0)
     states_tensor = states_tensor.permute(0, 2, 1)
 
     batch_size = states_tensor.shape[0]
     action_dims = trainer.config["network"]["action_dims"]
-    steps = torch.ones((batch_size, action_dims), dtype=torch.float32)
+    steps = torch.ones((batch_size, action_dims), dtype=torch.float32) * 1
 
     trainer.net.eval()
     tensor = forward(trainer, states_tensor, steps)
@@ -127,31 +131,68 @@ def handle_update(
 
     deltas = tensor.detach().cpu().numpy()
 
-    # Ensure shape is (N, 3)
+    # Ensure (N, 3)
     if deltas.shape[0] == 3:
         deltas = deltas.T
 
     deltas = deltas.astype(np.float32)
 
-    # Apply deformation
+    states[:, 0] += translation
+
     deformed_points = states + deltas / 100
 
-    # -----------------------------------------
-    # Surface reconstruction
-    # -----------------------------------------
-    result = splashsurf.reconstruct_surface(
-        deformed_points.astype(np.float32),
-        particle_radius=0.05,
-        smoothing_length=5,
-        cube_size=0.5
-    )
+    # result = splashsurf.reconstruct_surface(
+    #     deformed_points.astype(np.float32),
+    #     particle_radius=0.05,
+    #     smoothing_length=5,
+    #     cube_size=0.5
+    # )
 
-    triangles_out = result.mesh.triangles
-    triangles_out[:, [1, 2]] = triangles_out[:, [2, 1]]  # invert normals
+    # vertices_out = result.mesh.vertices.astype(np.float32)
+    # triangles_out = result.mesh.triangles.astype(np.int32)
 
-    vertices_out = result.mesh.vertices
+    # Invert normals for Unity
+    # triangles_out[:, [1, 2]] = triangles_out[:, [2, 1]]
 
-    return vertices_out, triangles_out, False
+    triangles_out = np.ones((1,3))
+
+    # --------------------------------------------------
+    # Update cached mesh for next hit (accumulation)
+    # --------------------------------------------------
+
+    cache["bary"] = deformed_points.copy()
+
+    import matplotlib.pyplot as plt
+
+    fig = plt.figure(figsize=(24,8))
+
+    pc1 = states
+    pc2 = deformed_points
+    
+    ax1 = fig.add_subplot(131, projection = '3d')
+    ax1.scatter(xs=pc1[:,0],ys=pc1[:,1],zs=pc1[:,2], s=2.2)
+    
+    ax2 = fig.add_subplot(132, projection = '3d')
+    ax2.scatter(xs=pc2[:,0],ys=pc2[:,1],zs=pc2[:,2], s=2.2, color='red')
+
+    ax1.set_xlabel("X")
+    ax1.set_ylabel("Y")
+    ax1.set_zlabel("Z")
+
+    diff_magnitudes = np.linalg.norm(deltas, axis=1)
+
+    ax3 = fig.add_subplot(133)
+    # X-axis: pc1[:, 0] (X coordinates), Y-axis: diff_magnitudes
+    ax3.scatter(pc1[:, 0], diff_magnitudes, s=5, color='purple', alpha=0.6)
+    ax3.set_title("Magnitude of Difference vs X")
+    ax3.set_xlabel("X Coordinate")
+    ax3.set_ylabel("Difference Magnitude")
+    ax3.grid(True, linestyle='--', alpha=0.6)
+
+
+    plt.show()
+
+    return cache["bary"], triangles_out, False
 
 
 # ---------------------------
