@@ -76,11 +76,16 @@ def handle_update(
 
     triangles = req.triangles.reshape(-1, 3).astype(np.int32)
 
+    # X range: 9.1376
+    # Y range: 3.0024
+    # Z range: 3.0030
+
     # --------------------------------------------------
     # FIRST HIT → compute barycentric sampling once
     # --------------------------------------------------
     if cache["bary"] is None:
-        vertices_input[:, [1, 2]] = vertices_input[:, [2, 1]]
+        # vertices_input[:, [1, 2]] = vertices_input[:, [2, 1]]
+        # vertices_input[:, [0, 2]] = vertices_input[:, [2, 0]]
 
         vertices_input[:, 0] *= 4.0
         vertices_input[:, 1] *= 4.0
@@ -89,7 +94,7 @@ def handle_update(
         states, tri_ids, bary = barycentric_sampling(
             vertices_input,
             triangles,
-            num_points=1000
+            num_points=2048
         )
 
         
@@ -103,15 +108,27 @@ def handle_update(
     states = cache["bary"]
 
 
-    translation = np.mean(states[:, 0], axis=0)
+    # translation = np.mean(states[:, 0], axis=0)
 
-    states[:, 0] -= translation
+    # states[:, 0] -= translation
 
     print("min_x: ", np.min(states[:, 0], axis=0))
 
     print("average_x: ", np.mean(states[:, 0], axis=0))
 
     print("max_x: ", np.max(states[:, 0], axis=0))
+
+    print("min_y: ", np.min(states[:, 1], axis=0))
+
+    print("average_y: ", np.mean(states[:, 1], axis=0))
+
+    print("max_y: ", np.max(states[:, 1], axis=0))
+
+    print("min_z: ", np.min(states[:, 2], axis=0))
+
+    print("average_z: ", np.mean(states[:, 2], axis=0))
+
+    print("max_z: ", np.max(states[:, 2], axis=0))
 
     # --------------------------------------------------
     # Neural network forward
@@ -129,15 +146,15 @@ def handle_update(
     if tensor.dim() == 3:
         tensor = tensor[0]  # (3, N)
 
-    deltas = tensor.detach().cpu().numpy()
+    deltas = tensor.squeeze(0).detach().cpu().numpy()
 
-    # Ensure (N, 3)
-    if deltas.shape[0] == 3:
-        deltas = deltas.T
+    # # Ensure (N, 3)
+    # if deltas.shape[0] == 3:
+    #     deltas = deltas.T
 
     deltas = deltas.astype(np.float32)
 
-    states[:, 0] += translation
+    # states[:, 0] += translation
 
     deformed_points = states + deltas / 100
 
@@ -179,11 +196,15 @@ def handle_update(
     ax1.set_ylabel("Y")
     ax1.set_zlabel("Z")
 
-    diff_magnitudes = np.linalg.norm(deltas, axis=1)
+    diff_x = deformed_points[:, 0] - states[:, 0]
+    diff_y = deformed_points[:, 1] - states[:, 1]
+    diff_z = deformed_points[:, 2] - states[:, 2]
 
     ax3 = fig.add_subplot(133)
     # X-axis: pc1[:, 0] (X coordinates), Y-axis: diff_magnitudes
-    ax3.scatter(pc1[:, 0], diff_magnitudes, s=5, color='purple', alpha=0.6)
+    ax3.scatter(pc1[:, 0], diff_x, s=5, color='purple', alpha=0.6)
+    ax3.scatter(pc1[:, 0], diff_y, s=5, color='red', alpha=0.6)
+    ax3.scatter(pc1[:, 0], diff_z, s=5, color='blue', alpha=0.6)
     ax3.set_title("Magnitude of Difference vs X")
     ax3.set_xlabel("X Coordinate")
     ax3.set_ylabel("Difference Magnitude")
@@ -265,13 +286,16 @@ async def client_handler(ws: WebSocketServerProtocol, trainer: Trainer):
 async def main(host="localhost", port=8765):
 
     base_path = get_project_root()
-    run_name = "mse_1024_unmasked"
+    run_name = "mse_2048_unmasked"
     config_path = base_path / "runs" / run_name / "config_out.yml"
 
     with open(config_path, "r") as file:
         config = yaml.safe_load(file)
 
     trainer = Trainer(config, log_to_tb=False)
+
+    trainer.load(model_path = base_path / "runs" / run_name / "best_model.pth")
+    trainer.net.eval()
 
     print("Trainer initialized.")
     print(f"Starting server on ws://{host}:{port}")
