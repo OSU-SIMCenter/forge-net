@@ -107,28 +107,20 @@ def handle_update(
 
     states = cache["bary"]
 
+    states[:, 0] += req.translation * 8
 
-    # translation = np.mean(states[:, 0], axis=0)
+    theta = np.radians(req.rotation * 2)
+    c, s = np.cos(theta), np.sin(theta)
+    
+    rotation_matrix = np.array([
+        [1, 0,  0],
+        [0, c, s],
+        [0, -s, c]
+    ])
+    
+    states = states @ rotation_matrix.T
 
-    # states[:, 0] -= translation
-
-    print("min_x: ", np.min(states[:, 0], axis=0))
-
-    print("average_x: ", np.mean(states[:, 0], axis=0))
-
-    print("max_x: ", np.max(states[:, 0], axis=0))
-
-    print("min_y: ", np.min(states[:, 1], axis=0))
-
-    print("average_y: ", np.mean(states[:, 1], axis=0))
-
-    print("max_y: ", np.max(states[:, 1], axis=0))
-
-    print("min_z: ", np.min(states[:, 2], axis=0))
-
-    print("average_z: ", np.mean(states[:, 2], axis=0))
-
-    print("max_z: ", np.max(states[:, 2], axis=0))
+    print(req.rotation)
 
     # --------------------------------------------------
     # Neural network forward
@@ -154,7 +146,10 @@ def handle_update(
 
     deltas = deltas.astype(np.float32)
 
-    # states[:, 0] += translation
+    states = states @ rotation_matrix
+
+    # 2. Undo the Translation second
+    states[:, 0] -= req.translation * 8
 
     deformed_points = states + deltas / 100
 
@@ -179,39 +174,39 @@ def handle_update(
 
     cache["bary"] = deformed_points.copy()
 
-    import matplotlib.pyplot as plt
+    # import matplotlib.pyplot as plt
 
-    fig = plt.figure(figsize=(24,8))
+    # fig = plt.figure(figsize=(24,8))
 
-    pc1 = states
-    pc2 = deformed_points
+    # pc1 = states
+    # pc2 = deformed_points
     
-    ax1 = fig.add_subplot(131, projection = '3d')
-    ax1.scatter(xs=pc1[:,0],ys=pc1[:,1],zs=pc1[:,2], s=2.2)
+    # ax1 = fig.add_subplot(131, projection = '3d')
+    # ax1.scatter(xs=pc1[:,0],ys=pc1[:,1],zs=pc1[:,2], s=2.2)
     
-    ax2 = fig.add_subplot(132, projection = '3d')
-    ax2.scatter(xs=pc2[:,0],ys=pc2[:,1],zs=pc2[:,2], s=2.2, color='red')
+    # ax2 = fig.add_subplot(132, projection = '3d')
+    # ax2.scatter(xs=pc2[:,0],ys=pc2[:,1],zs=pc2[:,2], s=2.2, color='red')
 
-    ax1.set_xlabel("X")
-    ax1.set_ylabel("Y")
-    ax1.set_zlabel("Z")
+    # ax1.set_xlabel("X")
+    # ax1.set_ylabel("Y")
+    # ax1.set_zlabel("Z")
 
-    diff_x = deformed_points[:, 0] - states[:, 0]
-    diff_y = deformed_points[:, 1] - states[:, 1]
-    diff_z = deformed_points[:, 2] - states[:, 2]
+    # diff_x = deformed_points[:, 0] - states[:, 0]
+    # diff_y = deformed_points[:, 1] - states[:, 1]
+    # diff_z = deformed_points[:, 2] - states[:, 2]
 
-    ax3 = fig.add_subplot(133)
-    # X-axis: pc1[:, 0] (X coordinates), Y-axis: diff_magnitudes
-    ax3.scatter(pc1[:, 0], diff_x, s=5, color='purple', alpha=0.6)
-    ax3.scatter(pc1[:, 0], diff_y, s=5, color='red', alpha=0.6)
-    ax3.scatter(pc1[:, 0], diff_z, s=5, color='blue', alpha=0.6)
-    ax3.set_title("Magnitude of Difference vs X")
-    ax3.set_xlabel("X Coordinate")
-    ax3.set_ylabel("Difference Magnitude")
-    ax3.grid(True, linestyle='--', alpha=0.6)
+    # ax3 = fig.add_subplot(133)
+    # # X-axis: pc1[:, 0] (X coordinates), Y-axis: diff_magnitudes
+    # ax3.scatter(pc1[:, 0], diff_x, s=5, color='purple', alpha=0.6)
+    # ax3.scatter(pc1[:, 0], diff_y, s=5, color='red', alpha=0.6)
+    # ax3.scatter(pc1[:, 0], diff_z, s=5, color='blue', alpha=0.6)
+    # ax3.set_title("Magnitude of Difference vs X")
+    # ax3.set_xlabel("X Coordinate")
+    # ax3.set_ylabel("Difference Magnitude")
+    # ax3.grid(True, linestyle='--', alpha=0.6)
 
 
-    plt.show()
+    # plt.show()
 
     return cache["bary"], triangles_out, False
 
