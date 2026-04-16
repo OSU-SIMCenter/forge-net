@@ -4,16 +4,56 @@ from PIL import Image
 import os
 from forge_net.eval import evaluate_series
 
-def poisson_recon_turntables(pc_data, output_path, n_frames=30):
-    """
-    Takes a numpy point cloud, reconstructs a surface, 
-    and saves a turntable GIF.
-    """
+# 2. Estimate normals (required for Poisson reconstruction)
+def pcd_to_mesh(self, pcd0=None):
+    if pcd0 is None:
+        pcd0 = self.pcd
+    if pcd0 is None:
+        raise ValueError("No point cloud to mesh: call post_process() first or pass pcd0")
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pcd0)
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamRadius(radius=1.0))
+    pcd.orient_normals_consistent_tangent_plane(k=15)
+
+    # Check if entire set needs flipped
+    np_points = np.array(pcd.points)
+    np_normals = np.array(pcd.normals)
+    dist_to_origin = np.linalg.norm(np_points, axis=1)
+    seed_idx = int(np.argmin(dist_to_origin))
+    if np_normals[seed_idx, 0] > 0:
+        print("Flipping normals...")
+        np_normals *= -1
+    pcd.normals = o3d.utility.Vector3dVector(np_normals)
+
+    # o3d.visualization.draw_geometries([pcd], point_show_normal=True)
+
+    self.mesh = self.call_o3d(pcd)
+    return self.mesh
+
+def call_o3d(self, pcd):
+    mesh, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=9)
+    mesh = mesh.remove_duplicated_vertices()
+    mesh = mesh.remove_duplicated_triangles()
+    mesh = mesh.remove_degenerate_triangles()
+    mesh = mesh.remove_unreferenced_vertices()
+    mesh.compute_vertex_normals()
+    # Orient vertex normals toward infinity (away from origin)
+    mesh_pts = np.asarray(mesh.vertices)
+    mesh_normals = np.asarray(mesh.vertex_normals)
+    dot = np.sum(mesh_normals * mesh_pts, axis=1)
+    mesh_normals[dot < 0] *= -1
+    mesh.vertex_normals = o3d.utility.Vector3dVector(mesh_normals)
+    mesh.vertex_colors = o3d.utility.Vector3dVector(np.random.uniform(size=(len(mesh_pts), 3)))
+    # o3d.visualization.draw_geometries([mesh], mesh_show_back_face=True)
+    return mesh
+
+
+def pc_to_poisson_recon(pc_data):
+
     # 1. Create PointCloud object
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(pc_data)
-    
-    # 2. Estimate normals (required for Poisson reconstruction)
+        
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.65, max_nn=45))
     pcd.orient_normals_consistent_tangent_plane(10)
 
@@ -27,6 +67,16 @@ def poisson_recon_turntables(pc_data, output_path, n_frames=30):
     mesh.compute_vertex_normals()
     mesh.paint_uniform_color([0.7, 0.7, 0.7]) # A nice "Grey Clay" color
 
+    return mesh
+
+
+def poisson_recon_turntables(pc_data, output_path, n_frames=30):
+    """
+    Takes a numpy point cloud, reconstructs a surface, 
+    and saves a turntable GIF.
+    """
+
+    mesh = pc_to_poisson_recon(pc_data)
     # 4. Setup Off-screen Rendering
     vis = o3d.visualization.Visualizer()
     vis.create_window(visible=False) # Keep it hidden

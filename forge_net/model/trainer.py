@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from forge_net.model.model import ForgeNet
+
 from forge_net.utils.plotting import plot_loss
 # from forge_net.utils.common import 
 

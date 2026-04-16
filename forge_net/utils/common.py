@@ -2,7 +2,7 @@ import numpy as np
 import pyvista as pv
 from pathlib import Path
 
-from forge_net.utils.math import quat_to_eulerxyz
+from forge_net.utils.math import quat_to_eulerxyz, transform_points, untransform_points
 
 class MeshContainer:
     def __init__(self, vertices, triangles):
@@ -46,6 +46,67 @@ def actions_from_feature_map(action_features, data):
     }
     return np.hstack([feature_map[f]() for f in action_features])
 
+
+from dataclasses import dataclass, field
+@dataclass
+class PressInfo:
+    name: str = ""
+    width: int = 1
+    height: int = 3
+    direction: list[float] = field(default_factory=lambda: [0, 1, 0])
+
+    def get_dict(self) -> "dict[str,object]":
+        return {"Name": self.name, "Width": self.width, "Height": self.height}
+
+
+def get_tool_mesh(points, translation, rotation, press_info=None, num_presses=2, ref='tool'):
+    
+    if press_info is None:
+        press_info = PressInfo()
+    
+    planes = []
+    directions = np.array([0, 1, 2])
+    press_dir = np.array(press_info.direction)
+    # apply transformation to mesh
+    transformed_points = transform_points(points, rotation, translation)
+    # find the directions we want to check against 
+    # (if direction is [0,1,0] we want to check indices 0,2 ignoring y)
+    directions_to_check = directions[~np.array(press_dir, dtype=bool)]
+    points_in_range = transformed_points[
+        (transformed_points[:, directions_to_check[0]] >= -1 * press_info.width / 2)
+        & (transformed_points[:, directions_to_check[0]] <= press_info.width / 2)
+        & (transformed_points[:, directions_to_check[1]] >= -1 * press_info.height / 2)
+        & (transformed_points[:, directions_to_check[1]] <= press_info.height / 2)
+    ]
+    direction_idx = press_info.direction.index(1)
+    vals = points_in_range[:, direction_idx]
+    max_points = max(vals)
+    # get plane mesh
+    offset = press_dir * 0.01
+    planes.append(
+        pv.Plane(
+            center=press_dir * max_points + offset,
+            direction=press_info.direction,
+            i_size=press_info.height,
+            j_size=press_info.width,
+        )
+    )
+    if num_presses == 2:
+        min_points = min(vals)
+        planes.append(
+            pv.Plane(
+                center=press_dir * min_points - offset,
+                direction=press_info.direction,
+                i_size=press_info.height,
+                j_size=press_info.width,
+            )
+        )
+    
+    if ref == 'tool': # rotate the tools
+        for plane in planes:
+            plane.points = untransform_points(plane.points, rotation, translation)
+    
+    return planes
 
 def pyvista_to_open3d(pv_mesh):
     import open3d as o3d

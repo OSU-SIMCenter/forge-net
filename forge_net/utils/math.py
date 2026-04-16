@@ -5,6 +5,7 @@ from scipy.sparse import coo_matrix, vstack, eye
 from scipy.sparse.linalg import lsqr
 import math
 from scipy.spatial.transform import Rotation
+from scipy.interpolate import RBFInterpolator
 
 def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array = None, seed: int = None) -> tuple[np.array, np.array, np.array]:
     '''
@@ -216,6 +217,31 @@ def invert_deltas_with_smoothness(predicted_deltas, triangle_ids, barycentric_co
         
     return vertex_deltas
 
+def rbf_interpolate_deformation(sparse_old, sparse_new, dense_old):
+    '''
+    sparse_old: e.g (1024, 3) - Original positions of known points
+    sparse_new: e.g (1024, 3) - Deformed positions of known points
+    dense_old:  e.g (10000, 3) - Original positions of all sampled points
+    '''
+    # 1. Calculate the displacement (the "delta")
+    displacements = sparse_new - sparse_old
+    print(displacements.shape)
+    print(sparse_new.shape)
+    print(sparse_old.shape)
+    print(dense_old.shape)
+    
+    # 2. Fit the RBF to learn the mapping: Position -> Displacement
+    # 'thin_plate_spline' is excellent for smooth surface deformations
+    interpolator = RBFInterpolator(sparse_old, displacements, kernel='thin_plate_spline')
+    
+    # 3. Predict the displacement for the 10,000 points
+    predicted_deltas = interpolator(dense_old)
+    
+    # 4. Apply the displacement
+    dense_new = dense_old + predicted_deltas
+    
+    return dense_new
+
 def normalize_points(points):
     point_min = np.min(points, axis=0)
     point_max = np.max(points, axis=0)
@@ -249,3 +275,50 @@ def quat_to_eulerxyz(quaternion):
 
 def eulerxyz_to_quat(xyz_degtuple):
     return Rotation.from_euler('xyz',xyz_degtuple,degrees=True).as_quat()
+
+def point_cloud_stats(points):
+    """
+    Prints statistics about a point cloud.
+    
+    Args:
+        points: array-like of shape (N, 3) with columns [x, y, z]
+    """
+    pts = np.asarray(points)
+    assert pts.ndim == 2 and pts.shape[1] == 3, "Input must be (N, 3)"
+
+    x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+    n = len(pts)
+
+    # Bounding box
+    mins = pts.min(axis=0)
+    maxs = pts.max(axis=0)
+    ranges = maxs - mins
+
+    # Volume and density
+    volume = ranges[0] * ranges[1] * ranges[2]
+    density = n / volume if volume > 0 else float("inf")
+
+    # Average nearest-neighbour distance (sampled for large clouds)
+    sample_size = min(n, 1000)
+    sample = pts[np.random.choice(n, sample_size, replace=False)]
+    # Vectorised pairwise distances within the sample
+    diff = sample[:, None, :] - sample[None, :, :]          # (S, S, 3)
+    dist_matrix = np.sqrt((diff ** 2).sum(axis=-1))          # (S, S)
+    np.fill_diagonal(dist_matrix, np.inf)
+    avg_nn_dist = dist_matrix.min(axis=1).mean()
+
+    print("=" * 45)
+    print(f"  Point Cloud Statistics  (N = {n:,})")
+    print("=" * 45)
+    print(f"  {'Axis':<6} {'Min':>10} {'Max':>10} {'Range':>10}")
+    print(f"  {'-'*36}")
+    for axis, mn, mx, rng in zip("XYZ", mins, maxs, ranges):
+        print(f"  {axis:<6} {mn:>10.4f} {mx:>10.4f} {rng:>10.4f}")
+    print()
+    print(f"  Centroid       x={x.mean():.4f},  y={y.mean():.4f},  z={z.mean():.4f}")
+    print(f"  Std dev        x={x.std():.4f},  y={y.std():.4f},  z={z.std():.4f}")
+    print()
+    print(f"  Bounding volume  {volume:.4f} units³")
+    print(f"  Point density    {density:.4f} pts / unit³")
+    print(f"  Avg NN distance  {avg_nn_dist:.4f} units  (sample={sample_size:,})")
+    print("=" * 45)

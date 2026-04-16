@@ -108,7 +108,7 @@ def save_comparison_turntable(pred_mesh, gt_mesh, output_path, n_frames=150, fps
     """
     Creates a side-by-side GIF comparing predicted vs ground truth mesh.
     """
-    plotter = pv.Plotter(shape=(1, 2), off_screen=True, window_size=[1024, 512])
+    plotter = pv.Plotter(shape=(1, 2), off_screen=True, window_size=[1920, 1080])
     
     # Subplot 0: Prediction
     plotter.subplot(0, 0)
@@ -139,12 +139,13 @@ def save_comparison_turntable(pred_mesh, gt_mesh, output_path, n_frames=150, fps
 
 if __name__ == "__main__":
 
-    from model.trainer import ForgeNetTrainer
-    from utils.utils import * 
+    from forge_net.model.trainer import ForgeNetTrainer
+    from forge_net.eval import evaluate_series
+    from forge_net.utils.common import * 
     import yaml
 
     base_path = get_project_root()
-    run_name = "mse_1024_unmasked_seeded_tri_ids"
+    run_name = "chamfer_1024_unmasked_seeded_tri_ids"
     config_path = base_path / "runs" / run_name / "config_out.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
@@ -156,7 +157,7 @@ if __name__ == "__main__":
     assert os.path.exists(data_path), "Dataset found"
     data  = np.load(data_path, allow_pickle=True)
     
-    # recursive_preds, sidx, eidx = evaluate_series(config, trainer)s
+    recursive_preds, sidx, eidx = evaluate_series(config, trainer)
     output_folder = Path(config["run"]["run_folder"])
     eval_path = output_folder / "eval" / "surfaces"
     eval_path.mkdir(exist_ok=True)
@@ -167,17 +168,17 @@ if __name__ == "__main__":
     bary_coords = data['bary_coords']
     gt_meshes = data['meshes_tp1']
     print(len(gt_meshes[0]['faces']))
-    # interval = 20
-    # for i, pc_np in enumerate(recursive_preds):
-    #     if i % interval == 0:
-    #         # 1. Recover the mesh vertices from point cloud predictions
-    #         recovered_mesh = invert_deltas_to_mesh(
-    #             base_mesh_pv, pc_np, tri_ids[i], bary_coords[i], alpha=0
-    #         )
+    interval = 20
+    for i, pc_np in enumerate(recursive_preds):
+        if i % interval == 0:
+            # 1. Recover the mesh vertices from point cloud predictions
+            recovered_mesh = invert_deltas_to_mesh(
+                base_mesh_pv, pc_np, tri_ids[i], bary_coords[i], alpha=0
+            )
             
-    #         # 2. Get the corresponding Ground Truth mesh
-    #         gt_mesh_pv = pv.PolyData(gt_meshes[i])
+            # 2. Get the corresponding Ground Truth mesh
+            gt_mesh_pv = pv.PolyData(gt_meshes[i])
             
-    #         # 3. Generate side-by-side comparison
-    #         filename = f"comparison_step_{i}.gif"
-    #         save_comparison_turntable(recovered_mesh, gt_mesh_pv, eval_path / filename)
+            # 3. Generate side-by-side comparison
+            filename = f"comparison_step_{i}.gif"
+            save_comparison_turntable(recovered_mesh, gt_mesh_pv, eval_path / filename)

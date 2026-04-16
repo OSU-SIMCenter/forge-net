@@ -1,3 +1,4 @@
+from forge_net.utils.common import get_tool_mesh
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import pyvista as pv
@@ -6,6 +7,11 @@ pv.set_jupyter_backend('static')
 import numpy as np
 import os
 import shutil
+import os
+import numpy as np
+import pyvista as pv
+import concurrent.futures
+from typing import List, Optional, Dict, Any
         
 def clear_folder(path):
     if os.path.exists(path):
@@ -630,6 +636,7 @@ def plot_eval_series(all_stats_dict,
                      max_cols=6, 
                      mode='loss',
                      fill_variation=True,
+                     add_mse=False,
                      add_chamfer=False,
                      add_hausdorff=False,
                      fig_path=None):
@@ -661,7 +668,7 @@ def plot_eval_series(all_stats_dict,
     gs = fig.add_gridspec(3, num_cols, height_ratios=[1.5, 1.5, 1.15])
 
     # --- ROW 0: Ground Truth ---
-    ax_gt0 = fig.add_subplot(gs[0, 0], projection='3d')
+    ax_gt0 = fig.add_subplot(gs[0:2, 0], projection='3d')
     plot_pc(ax_gt0, gt_seq[0], 'black', "GT Start (Step 0)")
 
     ax_gt1 = fig.add_subplot(gs[0, 1], projection='3d')
@@ -673,8 +680,8 @@ def plot_eval_series(all_stats_dict,
             plot_pc(ax, gt_seq[idx], 'grey', f"GT Step {idx + 1}")
 
     # --- ROW 1: Model Predictions ---
-    ax_m0 = fig.add_subplot(gs[1, 0], projection='3d')
-    plot_pc(ax_m0, rec_step_seq[0], 'black', "Input (Step 0)")
+    # ax_m0 = fig.add_subplot(gs[1, 0], projection='3d')
+    # plot_pc(ax_m0, rec_step_seq[0], 'black', "Input (Step 0)")
 
     ax_m1 = fig.add_subplot(gs[1, 1], projection='3d')
     plot_pc(ax_m1, rec_step_seq[1], 'blue', "Model Pred ($\hat{x}_1$)")
@@ -722,7 +729,7 @@ def plot_eval_series(all_stats_dict,
                                 mean_rec + std_rec, 
                                 color='red', alpha=0.2, label='1$\sigma$ Variation')
 
-        ax_loss.set_title(f"Aggregate Error Accumulation ({len(arr_rec)} Series)")
+        ax_loss.set_title(f"Aggregate Error Accumulation")
         ax_loss.set_xlabel("Step Number")
         ax_loss.set_ylabel("MSE Loss")
         ax_loss.set_xticks(steps)
@@ -776,7 +783,7 @@ def plot_eval_series(all_stats_dict,
                             rec_step_mean_means + 1*rec_step_mean_stds, 
                             color='red', alpha=0.2, label='1$\sigma$ deviation')
             
-        ax_loss.set_title(f"Aggregate Error Accumulation ({len(one_step_means)} Series)")
+        ax_loss.set_title(f"Aggregate Error Accumulation: Chamfer Trained Model")
         ax_loss.set_xlabel("Step Number")
         ax_loss.set_ylabel("Mean Euclidean Distance")
         ax_loss.set_xticks(steps)
@@ -784,6 +791,14 @@ def plot_eval_series(all_stats_dict,
         ax_loss.legend(loc='upper left')
         ax_loss.grid(True, which='both', alpha=0.3)
 
+    if add_mse:
+        rec_step_mses = np.array(all_stats_dict['all_rec_step_mses'])[:, :last_step_idx]
+        rec_step_mses_means = np.mean(rec_step_mses, axis=0)
+        ax_loss = ax_loss.twinx()
+        ax_loss.plot(steps, rec_step_mses_means, color='green')
+        ax_loss.set_ylabel('Mean Squared Error')
+        ax_loss.tick_params(axis='y', colors='green')
+    
     if add_chamfer:
         rec_step_chamfers = np.array(all_stats_dict['all_rec_step_chamfers'])[:, :last_step_idx]
         rec_step_chamfer_means = np.mean(rec_step_chamfers, axis=0)
@@ -803,3 +818,147 @@ def plot_eval_series(all_stats_dict,
 
     plt.savefig(fig_path)
 
+def render_deformation_frame(frame_data):
+    """Worker function to render a single multi-view frame for either meshes or point clouds."""
+    idx, pred_dict, gt_dict, presses, global_center, camera_distance, total_frames = frame_data
+
+    def build_polydata(data_dict):
+        if data_dict is None:
+            return None, False
+        if data_dict.get('faces') is not None:
+            return pv.PolyData(data_dict['points'], data_dict['faces']), True
+        else:
+            return pv.PolyData(data_dict['points']), False
+
+    pred_obj, pred_is_mesh = build_polydata(pred_dict)
+    gt_obj, gt_is_mesh = build_polydata(gt_dict)
+
+    # Create a new plotter for thread safety
+    plotter = pv.Plotter(shape=(2, 2), row_weights=[1.5, 1], col_weights=[1.5, 1],
+                         window_size=(1200, 1000), off_screen=True, border=True)
+
+    view_configs = [
+        (0, 0, 'Isometric', plotter.view_isometric, (camera_distance/1.3, camera_distance/1.3, camera_distance/1.3)),
+        (0, 1, 'Side (X)', plotter.view_yz, (camera_distance*1.3, 0, 0)),
+        (1, 0, 'Front (Y)', plotter.view_xz, (0, camera_distance, 0)),
+        (1, 1, 'Top (Z)', plotter.view_xy, (0, 0, camera_distance))
+    ]
+
+    for row, col, title, view_func, offset in view_configs:
+        plotter.subplot(row, col)
+        
+        if row == 1 and col == 0:
+            plotter.show_grid()
+            plotter.add_text(f"Frame: {idx+1}/{total_frames}", position='upper_right', font_size=10)
+
+        view_func()
+        plotter.camera.position = (global_center[0] + offset[0], 
+                                   global_center[1] + offset[1], 
+                                   global_center[2] + offset[2])
+        plotter.camera.focal_point = global_center
+        plotter.add_text(title, position='upper_left', font_size=10)
+        
+        plotter.set_focus(global_center)
+        plotter.reset_camera_clipping_range()
+
+        # Render Predicted Object
+        if pred_is_mesh:
+            plotter.add_mesh(pred_obj, show_edges=True, color='lightblue', show_scalar_bar=False)
+        else:
+            plotter.add_mesh(pred_obj, color='blue', render_points_as_spheres=True, point_size=6.5, show_scalar_bar=False)
+
+        # Render Ground Truth Object
+        if gt_obj is not None:
+            if gt_is_mesh:
+                plotter.add_mesh(gt_obj, color='green', show_edges=True, show_scalar_bar=False, opacity=0.25, style="wireframe")
+            else:
+                plotter.add_mesh(gt_obj, color='green', render_points_as_spheres=True, point_size=6.5, opacity=0.5, show_scalar_bar=False)
+        
+        if presses is not None:
+            plotter.add_mesh(presses[0], color='green', opacity=0.7, point_size=10)
+            plotter.add_mesh(presses[1], color='green', opacity=0.7, point_size=10)
+
+    plotter.render()
+    
+    temp_frame_path = f"temp_deform_frame_{idx:04d}.png"
+    plotter.screenshot(temp_frame_path)
+    plotter.close()
+    
+    return idx, temp_frame_path
+
+def create_deformation_gif_parallel(pred_data: List[Dict[str, np.ndarray]], 
+                                    gt_data: Optional[List[Dict[str, np.ndarray]]] = None,
+                                    show_presses=False,
+                                    actions=None,
+                                    out_path: str = "deformation_eval.gif", 
+                                    max_workers: Optional[int] = None,
+                                    fps: int = 10,
+    ):
+    """
+    Generates a multi-view GIF comparing predictions against ground truth.
+    Expects data as dicts: {'points': np.ndarray, 'faces': Optional[np.ndarray]}
+    """
+    os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
+    total_frames = len(pred_data)
+    
+    # Calculate global bounds to anchor cameras
+    all_points = [d['points'] for d in pred_data]
+    if gt_data:
+        all_points.extend([d['points'] for d in gt_data])
+    
+    if show_presses:
+        assert actions is not None
+        
+        translations = [a['translation'] for a in actions]
+        rotations = [r['rotation'] for r in actions]
+
+        all_presses = [
+                        get_tool_mesh(points, translation, rotation)
+                        for points, translation, rotation in zip(all_points, translations, rotations)
+        ]
+        
+    global_points = np.vstack(all_points)
+    min_bounds = np.min(global_points, axis=0)
+    max_bounds = np.max(global_points, axis=0)
+    
+    global_center = (min_bounds + max_bounds) / 2
+    diagonal = np.linalg.norm(max_bounds - min_bounds)
+    camera_distance = diagonal * 1.5 
+    
+    frame_data = []
+    for idx in range(total_frames):
+        current_pred = pred_data[idx]
+        current_ref = gt_data[idx] if (gt_data and idx < len(gt_data)) else None
+        current_press = all_presses[idx] if all_presses else None
+        frame_data.append((idx, current_pred, current_ref, current_press, global_center, camera_distance, total_frames))
+    
+    temp_frame_paths = []
+    
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {executor.submit(render_deformation_frame, data): data[0] for data in frame_data}
+        
+        for future in concurrent.futures.as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                frame_idx, temp_path = future.result()
+                temp_frame_paths.append((frame_idx, temp_path))
+            except Exception as exc:
+                print(f"Frame {idx} generated an exception: {exc}")
+    
+    temp_frame_paths.sort()
+    
+    # Compile the GIF
+    duration = 1000 / fps if fps > 0 else 100
+    try:
+        import imageio
+        with imageio.get_writer(out_path, mode='I', duration=duration) as writer:
+            for _, frame_path in temp_frame_paths:
+                writer.append_data(imageio.v2.imread(frame_path))
+                os.remove(frame_path)
+    except ImportError:
+        from PIL import Image
+        frames = [Image.open(frame_path) for _, frame_path in temp_frame_paths]
+        frames[0].save(out_path, save_all=True, append_images=frames[1:], 
+                       optimize=False, duration=int(duration), loop=0)
+        for _, frame_path in temp_frame_paths:
+            os.remove(frame_path)

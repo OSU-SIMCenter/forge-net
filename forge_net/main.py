@@ -24,7 +24,11 @@ def main():
     with open(run_folder / "config_out.yml", "w") as file:
         yaml.safe_dump(config, file)
     evaluate(config, trainer)
-    evaluate_series(config, trainer)
+    evaluate_series(config, trainer,
+                    add_chamfer=True, add_hausdorff=False,
+                    plot_mode='dist',
+                    num_series=1, min_series_length=35, 
+                    n_step=15, max_cols=7, save_meshes=False)
 
 if __name__ == "__main__":
     main()    

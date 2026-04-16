@@ -4,6 +4,7 @@ from forge_net.utils.common import *
 from forge_net.utils.math import *
 from forge_net.utils.plotting import * 
 from forge_net.invert_deltas import invert_deltas_to_mesh, save_comparison_turntable
+# from forge_net.loss.chamfer import chamfer_distance
 from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
 from tqdm import tqdm 
 
@@ -34,10 +35,11 @@ def evaluate(config, trainer):
             return(trainer.net(x_t=x,a_t=a))
     
     for idx in config["eval"]["eval_idxs"]:
+        idx = 0
         idx_path = eval_path / str(idx)
         idx_path.mkdir(exist_ok=True)
 
-        x_t = torch.tensor(states[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device) # x.shape = 1,3,n_points
+        x_t = torch.tensor(states[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device) # x.shape = 1,3,n_points   
         x_tp1 = torch.tensor(states_tp1[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device) # x.shape = 1,3,n_points
 
         a = torch.tensor(actions[idx], dtype=torch.float32).unsqueeze(0).to(trainer.device) #a.shape = 1,8
@@ -47,7 +49,7 @@ def evaluate(config, trainer):
         x_tp1_hat = x_t.squeeze(0).T + delta_hat.squeeze(0)
         x_tp1_hat = x_tp1_hat.cpu().numpy()
         delta_hat = delta_hat.cpu().squeeze().T
-        delta_gt = (x_tp1 - x_t).squeeze().cpu()
+        delta_gt = (x_tp1 - x_t).squeeze().cpu()    
 
         if config["network"]["loss"] == "mse": #TODO - these should be x_t and x_tp1
             loss_cont = torch.sum(((delta_hat - delta_gt) ** 2),axis=0).squeeze(0).numpy()
@@ -87,7 +89,7 @@ def evaluate(config, trainer):
                                             fig_path = idx_path / f"vector_fields_loss_{idx}.png")
 
 def evaluate_series(config, trainer, num_series, min_series_length, 
-                    max_cols, plot_mode, n_step, add_chamfer, add_hausdorff, save_meshes):
+                    max_cols, plot_mode, n_step, add_mse, add_chamfer, add_hausdorff, save_meshes):
     '''
     Docstring for evaluate_series
     
@@ -149,6 +151,7 @@ def evaluate_series(config, trainer, num_series, min_series_length,
         series_start_idx = sum(series_lengths[:eval_series_idx])
         series_end_idx = series_start_idx + series_length - 1 if series_length <= min_series_length else series_start_idx + min_series_length - 1
         truncated_length = series_end_idx - series_start_idx
+        last_frame_idx = series_end_idx - 1
         # series_id = series_ids[eval_series_idx]
         # print(f"Evaluating series {eval_series_idx} out of {len(series_lengths)} with \n \
         #         Series length: {series_length}  \
@@ -174,7 +177,9 @@ def evaluate_series(config, trainer, num_series, min_series_length,
             'rec_step_dist_95pct_stds': [],
             'rec_step_mses': [],
             'rec_step_chamfers': [],
-            'rec_step_hausdorffs': []  }
+            'rec_step_hausdorffs': [],
+            'rec_step_chamfer_to_last': [],
+            'rec_step_mse_to_last': []  }
 
         x_recursive = torch.tensor(states[series_start_idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
 
@@ -229,9 +234,26 @@ def evaluate_series(config, trainer, num_series, min_series_length,
             series_stats_dict['rec_step_mses'].append(rec_step_mse)
 
             if add_chamfer:
-
                 rec_step_chamfer =  chamfer_distance(x_recursive.permute(0,2,1), x_tp1_gt.permute(0,2,1))[0].item()
                 series_stats_dict['rec_step_chamfers'].append(rec_step_chamfer)
+
+                #calcualte chamfer from current frame to goal (last) frame
+                # Transform x_recursive into the last frame's reference frame
+                x_rec_np = x_recursive.squeeze().cpu().numpy().T
+                x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
+                x_rec_in_last_frame = transform_points(x_rec_world, rotations[last_frame_idx], positions[last_frame_idx])
+                
+                # Get the last frame gt points (preloaded before loop to avoid slow pickle access)
+                x_last_gt = torch.tensor(states_tp1[last_frame_idx], dtype=torch.float32).unsqueeze(0).to(trainer.device)
+                x_rec_last_frame_tensor = torch.tensor(x_rec_in_last_frame, dtype=torch.float32).unsqueeze(0).to(trainer.device)
+                
+                chamfer_to_last = chamfer_distance(
+                    x_rec_last_frame_tensor,
+                    x_last_gt
+                )[0].item()
+                print(chamfer_to_last)
+                series_stats_dict['rec_step_chamfer_to_last'].append(chamfer_to_last)
+
 
 
             if idx + 1 < series_end_idx:
@@ -271,6 +293,7 @@ def evaluate_series(config, trainer, num_series, min_series_length,
                 #compute hausdorff distance
                 rec_step_hausdorff = compute_haussdorff_distance(pv_mesh1=gt_mesh_pv, pv_mesh2=recovered_mesh)
                 series_stats_dict['rec_step_hausdorffs'].append(rec_step_hausdorff)
+                
             
         #save everything again
         all_stats_dict['all_gt_steps'].append(series_stats_dict['gt_steps'])
@@ -290,16 +313,17 @@ def evaluate_series(config, trainer, num_series, min_series_length,
         all_stats_dict['all_rec_step_hausdorffs'].append(series_stats_dict['rec_step_hausdorffs'])
 
     
-    plot_eval_series(all_stats_dict,
-                      mode=plot_mode,
-                      max_cols=max_cols,
-                      n_step=n_step,
-                      fill_variation=True,
-                      add_chamfer=add_chamfer,
-                      add_hausdorff=add_hausdorff,
-                      fig_path=eval_path/"eval_series.png")
+    # plot_eval_series(all_stats_dict,
+    #                   mode=plot_mode,
+    #                   max_cols=max_cols,
+    #                   n_step=n_step,
+    #                   fill_variation=True,
+    #                   add_mse=add_mse,
+    #                   add_chamfer=add_chamfer,
+    #                   add_hausdorff=add_hausdorff,
+    #                   fig_path=eval_path/"eval_series.png")
+    return all_stats_dict
     
-
 def eval_time(config, trainer):
     import timeit
     import torch
@@ -338,6 +362,97 @@ def eval_time(config, trainer):
     print(f"Forward pass avg time over {runs} runs: {avg_time_ms:.4f} ms")
     print(f"Total time for {runs} deformations: {total_time:.4f} ms")
 
+def render_series(config, trainer, num_series=5, min_series_length=50, render_mode="point_cloud", max_workers=None, fps=10):
+    '''
+    Renders animations of the network's recursive predictions.
+    
+    :param render_mode: "point_cloud" (fast) or "mesh" (slow, uses invert_deltas_to_mesh)
+    '''
+    assert render_mode in ["point_cloud", "mesh"], "render_mode must be 'point_cloud' or 'mesh'"
+    
+    data_path = config["datasets"]["data_out"]
+    data = np.load(data_path, allow_pickle=True)
+    states = data['coords_t']
+    states_tp1 = data['coords_tp1']
+    action_features = config["network"]["action_features"]
+    positions = data['positions']
+    rotations = data['rotations']
+    actions = actions_from_feature_map(action_features, data)
+    series_lengths = data['series_lengths']
+    
+    output_folder = Path(config["run"]["run_folder"])
+    render_path = output_folder / "renders"
+    render_path.mkdir(exist_ok=True)
+    
+    def forward(x, a):
+        with torch.no_grad():   
+            return trainer.net(x_t=x, a_t=a)
+
+    eval_series_idxs = [] 
+    for idx, sl in enumerate(series_lengths):
+        if sl >= min_series_length:
+                eval_series_idxs.append(idx)
+        if len(eval_series_idxs) >= num_series:
+            break
+
+    for eval_series_idx in tqdm(eval_series_idxs, desc=f"Rendering Series ({render_mode})"):
+        series_length = series_lengths[eval_series_idx]
+        series_start_idx = sum(series_lengths[:eval_series_idx])
+        series_end_idx = series_start_idx + min(series_length, min_series_length) - 1
+        
+        pred_data = []
+        gt_data = []
+        previous_deltas = None
+        
+        x_recursive = torch.tensor(states[series_start_idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+        
+        # mesh_data = data['meshes'][0]
+        # base_faces = np.array(mesh_data['faces'])
+        
+        if render_mode == "mesh":
+            base_mesh = pv.PolyData(mesh_data['points'], base_faces)
+
+        for idx in tqdm(range(series_start_idx, series_end_idx), desc="Forward Pass", leave=False):
+            
+            a_t = torch.tensor(actions[idx]*5, dtype=torch.float32).unsqueeze(0).to(trainer.device)
+            x_tp1_gt = torch.tensor(states_tp1[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+            x_tp1_gt = x_tp1_gt.squeeze().cpu().numpy().T
+
+            delta_recursive = forward(x_recursive, a_t)
+            
+            x_recursive = x_recursive + delta_recursive.transpose(1, 2) / 100
+            x_rec_np = x_recursive.squeeze().cpu().numpy().T
+            
+            # gt_mesh_data = data['meshes_tp1'][idx]
+            # gt_pts = np.array(gt_mesh_data['points'])
+
+            # # if render_mode == "mesh":
+            # #     tri_ids = data['tri_ids'][idx]
+            # #     bary_coords = data['bary_coords'][idx]
+            # #     recovered_mesh, current_deltas = invert_deltas_to_mesh(
+            # #         base_mesh, x_rec_np, tri_ids, bary_coords, alpha=0.05, initial_guess=previous_deltas
+            # #     )
+            # #     previous_deltas = current_deltas
+                
+            # #     pred_data.append({'points': np.array(recovered_mesh.points), 'faces': np.array(recovered_mesh.faces)})
+            # #     gt_data.append({'points': gt_pts, 'faces': base_faces})
+            # # else:
+            # #     # Point cloud mode: skip mesh reconstruction entirely!
+
+            
+            if idx + 1 < series_end_idx:
+                x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
+                x_rec_transformed = transform_points(x_rec_world, rotations[idx + 1], positions[idx + 1])
+                x_recursive = torch.tensor(x_rec_transformed, dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+            
+            pred_data.append({'points': x_rec_np, 'faces': None})
+            gt_data.append({'points': x_tp1_gt, 'faces': None})
+
+        gif_filename = f"series_{eval_series_idx}_{render_mode}.gif"
+        out_filepath = str(render_path / gif_filename)
+        
+        create_deformation_gif_parallel(pred_data=pred_data, gt_data=gt_data, out_path=out_filepath, max_workers=max_workers, fps=fps)
+
 if __name__ == "__main__":
     #Evaluate an existing trained model
     from forge_net.model.trainer import ForgeNetTrainer
@@ -359,8 +474,17 @@ if __name__ == "__main__":
     trainer.net.eval()
     # evaluate(config, trainer)
     evaluate_series(config, trainer,
-                    add_chamfer=True, add_hausdorff=False,
+                    add_mse=False,
+                    add_chamfer=False, 
+                    add_hausdorff=True,
                     plot_mode='dist',
-                    num_series=50, min_series_length=100, 
-                    n_step=15, max_cols=7, save_meshes=False)
+                    num_series=1, min_series_length=60, 
+                    n_step=1, max_cols=7, save_meshes=True)
     # eval_time(config, trainer)
+
+    # render_series(config, trainer, 
+    #               num_series=1, 
+    #               min_series_length=100,
+    #               render_mode="point_cloud",
+    #               max_workers=64, # Set to None to use all available cores
+    #               fps=4)
