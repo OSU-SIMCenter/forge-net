@@ -35,7 +35,7 @@ def evaluate(config, trainer):
             return(trainer.net(x_t=x,a_t=a))
     
     for idx in config["eval"]["eval_idxs"]:
-        idx = 0
+
         idx_path = eval_path / str(idx)
         idx_path.mkdir(exist_ok=True)
 
@@ -87,9 +87,14 @@ def evaluate(config, trainer):
         visualize_vector_diff_w_loss_cont(x_t=x_t_np, x_tp1=x_tp1_np, x_hat=x_tp1_hat, 
                                             loss_cont=loss_cont,
                                             fig_path = idx_path / f"vector_fields_loss_{idx}.png")
+        
+        plot_spherical_heatmap(vectors=x_tp1_np - x_tp1_hat, 
+                                            fig_path = idx_path / f"spherical_heatmap_{idx}.png" )
+
+        print(f"Saved figures in {idx_path}")
 
 def evaluate_series(config, trainer, num_series, min_series_length, 
-                    max_cols, plot_mode, n_step, add_mse, add_chamfer, add_hausdorff, save_meshes):
+                    max_cols, plot_mode, n_step, add_mse, add_chamfer, add_hausdorff, plot_heatmaps, save_meshes):
     '''
     Docstring for evaluate_series
     
@@ -186,6 +191,7 @@ def evaluate_series(config, trainer, num_series, min_series_length,
         for idx in tqdm(range(series_start_idx, series_end_idx)):
             x_t_gt = torch.tensor(states[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
             x_tp1_gt = torch.tensor(states_tp1[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+            x_tp1_gt_np = x_tp1_gt.squeeze(0).cpu().numpy().T
             a_t = torch.tensor(actions[idx], dtype=torch.float32).unsqueeze(0).to(trainer.device)
             delta_hat = forward(x_t_gt, a_t)
             x_tp1_hat = x_t_gt + delta_hat.transpose(1, 2) / 100
@@ -254,8 +260,6 @@ def evaluate_series(config, trainer, num_series, min_series_length,
                 print(chamfer_to_last)
                 series_stats_dict['rec_step_chamfer_to_last'].append(chamfer_to_last)
 
-
-
             if idx + 1 < series_end_idx:
                 #Transform into next frame reference
                 x_rec_np = x_recursive.squeeze().cpu().numpy().T
@@ -263,6 +267,7 @@ def evaluate_series(config, trainer, num_series, min_series_length,
                 x_rec_transformed = transform_points(x_rec_world, rotations[idx + 1], positions[idx + 1])
                 x_recursive = torch.tensor(x_rec_transformed, dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
 
+            counter += 1
 
             if add_hausdorff: # mesh reconstruction is pretty slow
                 mesh_data = data['meshes'][0]
@@ -282,7 +287,6 @@ def evaluate_series(config, trainer, num_series, min_series_length,
                 previous_deltas = current_deltas
                 gt_mesh_pv = pv.PolyData(gt_mesh['points'], mesh_data['faces'])
                 filename = f"comparison_step_{idx}.gif"
-                counter += 1
                 if save_meshes and counter % n_step == 0:
                     # print("Saving recon'd mesh turntables")
                     save_comparison_turntable(recovered_mesh, 
@@ -293,8 +297,11 @@ def evaluate_series(config, trainer, num_series, min_series_length,
                 #compute hausdorff distance
                 rec_step_hausdorff = compute_haussdorff_distance(pv_mesh1=gt_mesh_pv, pv_mesh2=recovered_mesh)
                 series_stats_dict['rec_step_hausdorffs'].append(rec_step_hausdorff)
-                
-            
+
+            if plot_heatmaps and counter % n_step==0:
+                plot_spherical_heatmap(vectors=x_rec_np - x_tp1_gt_np, 
+                                            fig_path = eval_path/f"surfaces/heatmaps/spherical_heatmap_{idx}.png" )
+
         #save everything again
         all_stats_dict['all_gt_steps'].append(series_stats_dict['gt_steps'])
         all_stats_dict['all_one_step_preds'].append(series_stats_dict['one_step_preds'])
@@ -459,7 +466,7 @@ if __name__ == "__main__":
     import yaml
 
     base_path = get_project_root()
-    run_name = "mse_1024_unmasked_seeded_tri_ids"
+    run_name = "chamfer_1024_unmasked_seeded_tri_ids"
     config_path = base_path / "runs" / run_name / "config_out.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
@@ -476,10 +483,11 @@ if __name__ == "__main__":
     evaluate_series(config, trainer,
                     add_mse=False,
                     add_chamfer=False, 
-                    add_hausdorff=True,
+                    add_hausdorff=False,
+                    plot_heatmaps=True,
                     plot_mode='dist',
                     num_series=1, min_series_length=60, 
-                    n_step=1, max_cols=7, save_meshes=True)
+                    n_step=1, max_cols=7, save_meshes=False)
     # eval_time(config, trainer)
 
     # render_series(config, trainer, 

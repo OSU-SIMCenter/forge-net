@@ -962,3 +962,59 @@ def create_deformation_gif_parallel(pred_data: List[Dict[str, np.ndarray]],
                        optimize=False, duration=int(duration), loop=0)
         for _, frame_path in temp_frame_paths:
             os.remove(frame_path)
+
+import matplotlib.pyplot as plt
+import numpy as np
+from mpl_toolkits.mplot3d import Axes3D
+
+def plot_spherical_heatmap(vectors, fig_path):
+    
+    # 1. Prepare your vector data (u, v, w)
+
+    u = vectors[:, 0]
+    v = vectors[:, 1]
+    w = vectors[:, 2]
+
+    # 2. Calculate magnitudes
+    magnitudes = np.sqrt(u**2 + v**2 + w**2)
+
+    # 3. Normalize vectors to project them onto a unit sphere surface
+    u_norm = u / magnitudes
+    v_norm = v / magnitudes
+    w_norm = w / magnitudes
+
+    # 4. Initialize Plot
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Optional: Draw a wireframe sphere for visual reference
+    phi, theta = np.mgrid[0.0:2.0*np.pi:40j, 0.0:np.pi:40j]
+    x_sphere = np.sin(theta) * np.cos(phi)
+    y_sphere = np.sin(theta) * np.sin(phi)
+    z_sphere = np.cos(theta)
+    ax.plot_wireframe(x_sphere, y_sphere, z_sphere, color="gray", alpha=0.2, linewidth=0.5)
+
+    # 5. Scatter plot the normalized points, colored by original magnitude
+    scatter = ax.scatter(u_norm, v_norm, w_norm, 
+                        c=magnitudes,    # Color by magnitude
+                        cmap='viridis',  # Color map (try 'plasma' or 'inferno')
+                        s=40,            # Point size
+                        edgecolors='w', 
+                        linewidth=0.5)
+
+    # Add a colorbar to indicate magnitude values
+    cbar = plt.colorbar(scatter, ax=ax, shrink=0.6, pad=0.1)
+    cbar.set_label('Vector Magnitude')
+
+    # Labels and View
+    ax.set_xlabel('U component')
+    ax.set_ylabel('V component')
+    ax.set_zlabel('W component')
+    ax.set_title('Vector Directions on a Sphere (Colored by Magnitude)')
+
+    # Adjust view angle for better depth perception
+    ax.view_init(elev=20, azim=45)
+    if fig_path:
+        plt.savefig(fig_path)
+    else:
+        plt.show()
