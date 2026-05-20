@@ -3,17 +3,21 @@ import pyvista as pv
 from pathlib import Path
 
 from forge_net.utils.math import quat_to_eulerxyz, transform_points, untransform_points
+import ast
 
 class MeshContainer:
-    def __init__(self, vertices, triangles):
+    def __init__(self, vertices, triangles, tets):
         self.vertices = np.array(vertices).reshape(-1, 3)
-        self.triangles = np.array(triangles).reshape(-1, 3)
+        if triangles:
+            self.triangles = np.array(triangles).reshape(-1, 3)
+        if tets:
+            self.tets = np.array(tets).reshape(-1,4)
 
     @classmethod
-    def from_db(cls, vertices, triangles):
-        return cls(vertices, triangles)
+    def from_db(cls, vertices, triangles, tets=None):
+        return cls(vertices, triangles, tets)
 
-def meshcontainer_to_pv(mesh):
+def meshcontainer_to_surface(mesh):
     """
     Convert a MeshContainer instance to a PyVista PolyData mesh.
     mesh: MeshContainer with .vertices (N, 3) and .triangles (M, 3)
@@ -22,6 +26,19 @@ def meshcontainer_to_pv(mesh):
     face_array = np.hstack([
         np.full((n_faces, 1), 3),
         mesh.triangles
+    ]).astype(np.int64)
+
+    return pv.PolyData(mesh.vertices, face_array)
+
+def meshcontainer_to_volume(mesh):
+    """
+    Convert a MeshContainer instance to a PyVista PolyData mesh.
+    mesh: MeshContainer with .vertices (N, 3) and .tets (M, 4)
+    """
+    n_faces = len(mesh.tets)
+    face_array = np.hstack([
+        np.full((n_faces, 1), 4),
+        mesh.tets
     ]).astype(np.int64)
 
     return pv.PolyData(mesh.vertices, face_array)

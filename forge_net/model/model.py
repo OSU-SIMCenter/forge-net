@@ -1,173 +1,151 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import jax
+import jax.numpy as jnp
+import flax.linen as nn
 
 class ForgeNet(nn.Module):
-    def __init__(self, point_size, latent_size, action_dims, dropout=0.3, use_res=True):
-        super(ForgeNet, self).__init__()
-        self.latent_size = int(latent_size / 2)
-        self.point_size = point_size
-        self.dropout = dropout
-        self.use_res = use_res
+    latent_size: int
+    action_dims: int
+    dropout: float = 0.3
+    use_res: bool = True
+
+    @nn.compact
+    def __call__(self, x_t: jax.Array, a_t: jax.Array, train: bool = True):
+        """
+        Forward pass for ForgeNet.
         
+        Args:
+            x_t: Point cloud input of shape (B, N, 3).
+            a_t: Action input of shape (B, action_dims).
+            train: Boolean flag for BatchNorm and Dropout behavior.
+        """
+        B, N, C = x_t.shape
+        half_latent = self.latent_size // 2
+
+        he_init = nn.initializers.he_normal()
+
         # ====================================================================
         # STATE ENCODER
         # ====================================================================
-        self.conv1 = nn.Conv1d(3, 64, 1)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.conv2 = nn.Conv1d(64, 64, 1)
-        self.bn2 = nn.BatchNorm1d(64)
-        
-        self.conv3 = nn.Conv1d(64, 128, 1)
-        self.bn3 = nn.BatchNorm1d(128)
-        self.proj1 = nn.Conv1d(64, 128, 1)
-        self.bn_proj1 = nn.BatchNorm1d(128)
-        
-        self.conv4 = nn.Conv1d(128, 256, 1)
-        self.bn4 = nn.BatchNorm1d(256)
-        self.proj2 = nn.Conv1d(128, 256, 1)
-        self.bn_proj2 = nn.BatchNorm1d(256)
-        
-        self.conv5 = nn.Conv1d(256, self.latent_size, 1)
-        self.bn5 = nn.BatchNorm1d(self.latent_size)
-        self.dropout_state = nn.Dropout(dropout)
-        
+        x = nn.Dense(64, kernel_init=he_init)(x_t)
+        x = nn.BatchNorm(use_running_average=not train)(x)
+        x = nn.relu(x)
+
+        identity1 = x
+        x = nn.Dense(64, kernel_init=he_init)(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
+        x = nn.relu(x)
+        if self.use_res:
+            x = x + identity1
+
+        identity2 = x
+        if self.use_res:
+            identity2 = nn.Dense(128, kernel_init=he_init)(identity2)
+            identity2 = nn.BatchNorm(use_running_average=not train)(identity2)
+
+        x = nn.Dense(128, kernel_init=he_init)(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
+        x = nn.relu(x)
+        if self.use_res:
+            x = x + identity2
+
+        identity3 = x
+        if self.use_res:
+            identity3 = nn.Dense(256, kernel_init=he_init)(identity3)
+            identity3 = nn.BatchNorm(use_running_average=not train)(identity3)
+
+        x = nn.Dense(256, kernel_init=he_init)(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
+        x = nn.relu(x)
+        if self.use_res:
+            x = x + identity3
+
+        x = nn.Dense(half_latent, kernel_init=he_init)(x)
+        x = nn.BatchNorm(use_running_average=not train)(x)
+
+        # Global context: Max pooling over the N (points) dimension
+        x_l = jnp.max(x, axis=1) 
+        x_l = nn.Dropout(self.dropout, deterministic=not train)(x_l)
+
         # ====================================================================
         # ACTION ENCODER
         # ====================================================================
-        self.act_fc1 = nn.Linear(action_dims, 64)
-        self.act_bn1 = nn.BatchNorm1d(64)
-        self.act_fc2 = nn.Linear(64, 64)
-        self.act_bn2 = nn.BatchNorm1d(64)
-        self.act_fc3 = nn.Linear(64, 128)
-        self.act_bn3 = nn.BatchNorm1d(128)
-        self.act_proj1 = nn.Linear(64, 128)
-        self.act_bn_proj1 = nn.BatchNorm1d(128)
-        self.act_fc4 = nn.Linear(128, 256)
-        self.act_bn4 = nn.BatchNorm1d(256)
-        self.act_proj2 = nn.Linear(128, 256)
-        self.act_bn_proj2 = nn.BatchNorm1d(256)
-        self.act_fc5 = nn.Linear(256, self.latent_size)
-        self.dropout_action = nn.Dropout(dropout)
-        
+        # Ensure a_t is at least 2D: (B, action_dims)
+        if a_t.ndim == 1:
+            a_t = jnp.expand_dims(a_t, axis=1)
+
+        a = nn.Dense(64, kernel_init=he_init)(a_t)
+        a = nn.BatchNorm(use_running_average=not train)(a)
+        a = nn.relu(a)
+
+        act_identity1 = a
+        a = nn.Dense(64, kernel_init=he_init)(a)
+        a = nn.BatchNorm(use_running_average=not train)(a)
+        a = nn.relu(a)
+        if self.use_res:
+            a = a + act_identity1
+
+        act_identity2 = a
+        if self.use_res:
+            act_identity2 = nn.Dense(128, kernel_init=he_init)(act_identity2)
+            act_identity2 = nn.BatchNorm(use_running_average=not train)(act_identity2)
+
+        a = nn.Dense(128, kernel_init=he_init)(a)
+        a = nn.BatchNorm(use_running_average=not train)(a)
+        a = nn.relu(a)
+        if self.use_res:
+            a = a + act_identity2
+
+        act_identity3 = a
+        if self.use_res:
+            act_identity3 = nn.Dense(256, kernel_init=he_init)(act_identity3)
+            act_identity3 = nn.BatchNorm(use_running_average=not train)(act_identity3)
+
+        a = nn.Dense(256, kernel_init=he_init)(a)
+        a = nn.BatchNorm(use_running_average=not train)(a)
+        a = nn.relu(a)
+        if self.use_res:
+            a = a + act_identity3
+
+        # Dropout applied before the final projection in your PyTorch code
+        a = nn.Dropout(self.dropout, deterministic=not train)(a)
+        a_l = nn.Dense(half_latent, kernel_init=he_init)(a)
+
         # ====================================================================
         # POINT-WISE DECODER
-        # Uses Conv1d (kernel=1) to process points independently
-        # Input size: (State Latent + Action Latent + 3 Original XYZ Coords)
         # ====================================================================
-        decoder_in_dim = (self.latent_size * 2) + 3
-        
-        self.dec_conv1 = nn.Conv1d(decoder_in_dim, 512, 1)
-        self.dec_bn1 = nn.BatchNorm1d(512)
-        
-        self.dec_conv2 = nn.Conv1d(512, 256, 1)
-        self.dec_bn2 = nn.BatchNorm1d(256)
-        
-        self.dec_conv3 = nn.Conv1d(256, 128, 1)
-        self.dec_bn3 = nn.BatchNorm1d(128)
-        self.dec_proj1 = nn.Conv1d(512, 128, 1) # Projection for residual
-        self.dec_bn_proj1 = nn.BatchNorm1d(128)
-        
-        self.dec_conv4 = nn.Conv1d(128, 3, 1) # Final Output: (dx, dy, dz)
-        self.dropout_dec = nn.Dropout(dropout * 0.5)
-        
-        self._build_codecs()
-        self._initialize_weights()
+        # Combine global features: (B, half_latent * 2)
+        global_latent = jnp.concatenate([x_l, a_l], axis=1)
 
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, (nn.Conv1d, nn.Linear)):
-                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm1d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-    
-    def _build_codecs(self):
+        # Expand global context across all points: (B, N, half_latent * 2)
+        global_expanded = jnp.broadcast_to(
+            jnp.expand_dims(global_latent, axis=1),
+            (B, N, half_latent * 2)
+        )
+
+        # Concatenate Global Context with Point Positions: (B, N, half_latent*2 + 3)
+        combined_features = jnp.concatenate([global_expanded, x_t], axis=-1)
+
+        d = nn.Dense(512, kernel_init=he_init)(combined_features)
+        d = nn.BatchNorm(use_running_average=not train)(d)
+        d = nn.relu(d)
+        d = nn.Dropout(self.dropout * 0.5, deterministic=not train)(d)
+
+        dec_identity1 = d
         if self.use_res:
-            def state_encoder(x):
-                x = F.relu(self.bn1(self.conv1(x)))
-                identity = x
-                x = F.relu(self.bn2(self.conv2(x))) + identity
-                identity = self.bn_proj1(self.proj1(x))
-                x = F.relu(self.bn3(self.conv3(x))) + identity
-                identity = self.bn_proj2(self.proj2(x))
-                x = F.relu(self.bn4(self.conv4(x))) + identity
-                x = self.bn5(self.conv5(x))
-                x = torch.max(x, 2, keepdim=False)[0] 
-                return self.dropout_state(x)
-            
-            def action_encoder(a):
-                if len(a.shape) == 1: a = a.unsqueeze(1)
-                a = F.relu(self.act_bn1(self.act_fc1(a)))
-                identity = a
-                a = F.relu(self.act_bn2(self.act_fc2(a))) + identity
-                identity = self.act_bn_proj1(self.act_proj1(a))
-                a = F.relu(self.act_bn3(self.act_fc3(a))) + identity
-                identity = self.act_bn_proj2(self.act_proj2(a))
-                a = F.relu(self.act_bn4(self.act_fc4(a))) + identity
-                return self.act_fc5(self.dropout_action(a))
+            dec_identity1 = nn.Dense(128, kernel_init=he_init)(dec_identity1)
+            dec_identity1 = nn.BatchNorm(use_running_average=not train)(dec_identity1)
 
-            def decoder(combined_features):
-                """
-                Processes each point individually using shared weights.
-                combined_features: (B, Latent*2 + 3, N)
-                """
-                x = F.relu(self.dec_bn1(self.dec_conv1(combined_features)))
-                x = self.dropout_dec(x)
-                identity = self.dec_bn_proj1(self.dec_proj1(x))
-                x = F.relu(self.dec_bn2(self.dec_conv2(x)))
-                x = F.relu(self.dec_bn3(self.dec_conv3(x))) + identity
-                delta = self.dec_conv4(x) # (B, 3, N)
-                return delta.transpose(1, 2) # (B, N, 3)
-        else:
-            def state_encoder(x):
-                x = F.relu(self.bn1(self.conv1(x)))
-                x = F.relu(self.bn2(self.conv2(x)))
-                x = F.relu(self.bn3(self.conv3(x)))
-                x = F.relu(self.bn4(self.conv4(x)))
-                x = self.bn5(self.conv5(x))
-                x = torch.max(x, 2, keepdim=False)[0] 
-                return self.dropout_state(x)
-            
-            def action_encoder(a):
-                if len(a.shape) == 1: a = a.unsqueeze(1)
-                a = F.relu(self.act_bn1(self.act_fc1(a)))
-                a = F.relu(self.act_bn2(self.act_fc2(a))) 
-                a = F.relu(self.act_bn3(self.act_fc3(a)))
-                a = F.relu(self.act_bn4(self.act_fc4(a)))
-                return self.act_fc5(self.dropout_action(a))
+        d = nn.Dense(256, kernel_init=he_init)(d)
+        d = nn.BatchNorm(use_running_average=not train)(d)
+        d = nn.relu(d)
 
-            def decoder(combined_features):
-                """
-                Processes each point individually using shared weights.
-                combined_features: (B, Latent*2 + 3, N)
-                """
-                x = F.relu(self.dec_bn1(self.dec_conv1(combined_features)))
-                x = self.dropout_dec(x)
-                x = F.relu(self.dec_bn2(self.dec_conv2(x)))
-                x = F.relu(self.dec_bn3(self.dec_conv3(x)))
-                delta = self.dec_conv4(x) # (B, 3, N)
-                return delta.transpose(1, 2) # (B, N, 3)
-            
-        self.state_encoder = state_encoder
-        self.action_encoder = action_encoder
-        self.decoder = decoder
-        
-    def forward(self, x_t, a_t):
-        B, C, N = x_t.shape
-        
-        # 1. Encode Global Context
-        x_l = self.state_encoder(x_t)      # (B, latent_size)
-        a_l = self.action_encoder(a_t)     # (B, latent_size)
-        global_latent = torch.cat([x_l, a_l], dim=1) # (B, latent_size*2)
-        
-        # 2. Expand Global Context to every point
-        global_expanded = global_latent.unsqueeze(2).expand(-1, -1, N) # (B, latent_size*2, N)
-        
-        # 3. Concatenate Global Context with Point Positions (Identity Skip)
-        # This tells the decoder WHERE each point is in space.
-        combined_features = torch.cat([global_expanded, x_t], dim=1) # (B, latent_size*2 + 3, N)
-        
-        # 4. Predict Point-wise Deltas
-        delta = self.decoder(combined_features) 
+        d = nn.Dense(128, kernel_init=he_init)(d)
+        d = nn.BatchNorm(use_running_average=not train)(d)
+        d = nn.relu(d)
+        if self.use_res:
+            d = d + dec_identity1
+
+        # Predict Point-wise Deltas
+        delta = nn.Dense(3, kernel_init=he_init)(d) # Final output is directly (B, N, 3)
+
         return delta

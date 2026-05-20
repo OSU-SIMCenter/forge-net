@@ -7,17 +7,18 @@ from forge_net.invert_deltas import invert_deltas_to_mesh, save_comparison_turnt
 # from forge_net.loss.chamfer import chamfer_distance
 from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
 from tqdm import tqdm 
-
+import jax
+import jax.numpy as jnp
+import flax.linen as nn
 def evaluate(config, trainer):
     '''
     Evaluate a trained ForgeNet network by creating some simple scatter and vector plots
-    
-    :param config: YAML config containing paths to data and network settings
-    :param trainer: trainer class instance
     '''
     data_path = config["datasets"]["data_out"]
     assert os.path.exists(data_path), "Dataset found"
-    data  = np.load(data_path)
+    data = np.load(data_path)
+    
+    # JAX native shape is (N, 3), no need to transpose yet
     states = data['coords_t']
     states_tp1 = data['coords_tp1']
     action_features = config["network"]["action_features"]
@@ -27,43 +28,52 @@ def evaluate(config, trainer):
     output_folder = Path(config["run"]["run_folder"])
     eval_path = output_folder / "eval"
     eval_path.mkdir(exist_ok=True)
-
-    trainer.load(model_path = output_folder / "best_model.pth")
-    
-    def forward(x,a):
-        with torch.no_grad():
-            return(trainer.net(x_t=x,a_t=a))
-    
+        
     for idx in config["eval"]["eval_idxs"]:
-
         idx_path = eval_path / str(idx)
         idx_path.mkdir(exist_ok=True)
 
-        x_t = torch.tensor(states[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device) # x.shape = 1,3,n_points   
-        x_tp1 = torch.tensor(states_tp1[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device) # x.shape = 1,3,n_points
-
-        a = torch.tensor(actions[idx], dtype=torch.float32).unsqueeze(0).to(trainer.device) #a.shape = 1,8
-        x_t_np = x_t.T.squeeze().cpu().numpy()
-        x_tp1_np = x_tp1.T.squeeze().cpu().numpy()
-        delta_hat = forward(x_t,a) / 100
-        x_tp1_hat = x_t.squeeze(0).T + delta_hat.squeeze(0)
-        x_tp1_hat = x_tp1_hat.cpu().numpy()
-        delta_hat = delta_hat.cpu().squeeze().T
-        delta_gt = (x_tp1 - x_t).squeeze().cpu()    
-
-        if config["network"]["loss"] == "mse": #TODO - these should be x_t and x_tp1
-            loss_cont = torch.sum(((delta_hat - delta_gt) ** 2),axis=0).squeeze(0).numpy()
+        # Prepare JAX inputs: (1, N, 3) and (1, Dims)
+        x_t_jax = jnp.array(states[idx])[jnp.newaxis, ...]
+        a_jax = jnp.array(actions[idx])[jnp.newaxis, ...]
         
-        elif config["network"]["loss"] == "chamfer" or config["network"]["loss"] == "wsd":
-            loss_cont =  chamfer_distance(delta_gt.T.unsqueeze(0), 
-                                          delta_hat.T.unsqueeze(0), 
-                                          point_reduction=None, 
-                                          batch_reduction=None)[0][0][-1]
+        # 1. Inference using our new JAX trainer
+        # This returns a JAX Array on the GPU/TPU
+        delta_hat_jax = trainer.predict(x_t_jax, a_jax) / 100.0
+        
+        # 2. Convert to NumPy immediately for plotting compatibility
+        # jax.device_get is the safe way to pull data to CPU NumPy
+        x_t_np = np.array(states[idx])
+        x_tp1_np = np.array(states_tp1[idx])
+        delta_hat_np = jax.device_get(delta_hat_jax).squeeze(0)
+        
+        # Calculate prediction in coordinate space
+        x_tp1_hat = x_t_np + delta_hat_np
+        
+        # Ground truth delta
+        delta_gt_np = x_tp1_np - x_t_np
+
+        # 3. Handle Loss calculations for the plots
+        # We temporarily convert to Torch only for the loss function if needed
+        if config["network"]["loss"] == "mse":
+            loss_cont = np.sum((delta_hat_np - delta_gt_np)**2, axis=1).squeeze()
+        
+        elif config["network"]["loss"] in ["chamfer", "wsd"]:
+            # Wrap NumPy back to Torch strictly for the PyTorch3D Chamfer function
+            d_gt_torch = torch.from_numpy(delta_gt_np).unsqueeze(0).float()
+            d_hat_torch = torch.from_numpy(delta_hat_np).unsqueeze(0).float()
+            
+            # Using your existing PyTorch3D import
+            loss_cont = chamfer_distance(d_gt_torch, 
+                                         d_hat_torch, 
+                                         point_reduction=None, 
+                                         batch_reduction=None)[0][0]
+            loss_cont = loss_cont.cpu().numpy()
         
         else:
-            raise ValueError("Loss function not found")
+            raise ValueError("Loss function not supported for evaluation")
 
-        #Make eval plots
+        # --- Your existing plotting functions work as-is now ---
         compare_scatters(pc1=x_tp1_np, pc2=x_tp1_hat, 
                     label_1="Ground Truth Mesh Tp1", 
                     label_2="Predicted Mesh Tp1", 
@@ -73,9 +83,9 @@ def evaluate(config, trainer):
         compare_scatters_w_loss_cont(pc1=x_t_np, pc2=x_tp1_hat, loss_cont=loss_cont, 
                                      fig_path=idx_path / f"compare_scatter_loss_{idx}.png")
 
-        visualize_point_diff(x_tp1_hat,x_tp1_np, point_size=5, 
+        visualize_point_diff(x_tp1_hat, x_tp1_np, point_size=5, 
                              label="Vector Field Error \n(Predicted Deltas minus G.T. Deltas)",
-                              fig_path = idx_path / f"point_diff_{idx}.png")
+                             fig_path = idx_path / f"point_diff_{idx}.png")
         
         compare_vector_fields(x_t_np, x_tp1_np, x_tp1_hat, min_magnitude=8.0, 
                               fig_path=idx_path / f"compare_vector_fields_{idx}.png")
@@ -94,241 +104,160 @@ def evaluate(config, trainer):
         print(f"Saved figures in {idx_path}")
 
 def evaluate_series(config, trainer, num_series, min_series_length, 
-                    max_cols, plot_mode, n_step, add_mse, add_chamfer, add_hausdorff, plot_heatmaps, save_meshes):
-    '''
-    Docstring for evaluate_series
+                    max_cols, plot_mode, n_step, add_mse, add_chamfer, 
+                    add_hausdorff, plot_heatmaps, save_meshes):
     
-    :param config: YAML config containing paths to data and network settings
-    :param trainer: trainer class instance
-    :param num_series: How many series to evaluate total (e.g n=25)
-    :param min_series_length: Minimum rollout length
-    :param max_cols: maximum columns for the series scatters (can be very wide)
-    :param plot_mode: "dist" or "loss" - which metrics to plot
-    :param n_step: Make plots ever n_steps
-    :param add_chamfer: whether to calculate and add chamfer distance to the eval plot
-    :param add_hausdorff: Uses LSQR to reconstruct surface mesh and compute hausdorff distance
-    :param save_meshes: Whether to save reconstructed mesh (or simply use it for a metric )
-    '''
-    #NOTE: if data is randomly seeded the losses between iterations may be higher than expected
     data_path = config["datasets"]["data_out"]
     assert os.path.exists(data_path), "Dataset found"
-    data  = np.load(data_path, allow_pickle=True)
+    data = np.load(data_path, allow_pickle=True)
+    
+    # Raw data is usually (N, 3)
     states = data['coords_t']
     states_tp1 = data['coords_tp1']
-    steps = data['steps']
-    action_features = config["network"]["action_features"]
-    positions = data['positions']
     rotations = data['rotations']
-
+    positions = data['positions']
+    action_features = config["network"]["action_features"]
     actions = actions_from_feature_map(action_features, data)
-    
-    def forward(x, a):
-        with torch.no_grad():
-            return(trainer.net(x_t=x, a_t=a))
-    
     series_lengths = data['series_lengths']
-    eval_series_idxs = [] 
-    for idx, sl in enumerate(series_lengths):
-        if sl >= min_series_length:
-                eval_series_idxs.append(idx)
-        if len(eval_series_idxs) >= num_series:
-            break
-    
-    all_stats_dict = {
-        'all_gt_steps': [],
-        'all_one_step_preds': [],
-        'all_rec_step_preds': [],
-        'all_one_step_dist_means' : [],
-        'all_one_step_dist_stds' : [],
-        'all_one_step_dist_95pct_means' : [],
-        'all_one_step_dist_95pct_stds' : [],
-        'all_one_step_mses' : [],
-        'all_rec_step_dist_means' : [],
-        'all_rec_step_dist_stds' : [],
-        'all_rec_step_dist_95pct_means' : [],
-        'all_rec_step_dist_95pct_stds' : [],
-        'all_rec_step_mses' : [],
-        'all_rec_step_chamfers' : [],
-        'all_rec_step_hausdorffs' : [] } 
 
-    for eval_series_idx in tqdm(eval_series_idxs):
+    output_folder = Path(config["run"]["run_folder"])
+    eval_path = output_folder / "eval_series"
+    eval_path.mkdir(exist_ok=True, parents=True)
+
+    eval_series_idxs = [idx for idx, sl in enumerate(series_lengths) if sl >= min_series_length][:num_series]
+    
+    # Initialize all_stats_dict with exactly the same keys as the original
+    all_stats_dict = {f'all_{k}': [] for k in [
+        'gt_steps', 'one_step_preds', 'rec_step_preds',
+        'one_step_dist_means', 'one_step_dist_stds', 'one_step_dist_95pct_means', 'one_step_dist_95pct_stds',
+        'one_step_mses', 'rec_step_dist_means', 'rec_step_dist_stds', 'rec_step_dist_95pct_means',
+        'rec_step_dist_95pct_stds', 'rec_step_mses', 'rec_step_chamfers', 'rec_step_hausdorffs',
+        'rec_step_chamfer_to_last', 'rec_step_mse_to_last'
+    ]}
+
+    for eval_series_idx in tqdm(eval_series_idxs, desc="Evaluating Series"):
         series_length = series_lengths[eval_series_idx]
         series_start_idx = sum(series_lengths[:eval_series_idx])
+        # Match the original truncation logic
         series_end_idx = series_start_idx + series_length - 1 if series_length <= min_series_length else series_start_idx + min_series_length - 1
-        truncated_length = series_end_idx - series_start_idx
         last_frame_idx = series_end_idx - 1
-        # series_id = series_ids[eval_series_idx]
-        # print(f"Evaluating series {eval_series_idx} out of {len(series_lengths)} with \n \
-        #         Series length: {series_length}  \
-        #         Starting index: {series_start_idx} \
-        #         End index: {series_end_idx} \
-        #         Trunacted length: {truncated_length}" )
-        
-        counter = 0
+
+        series_stats_dict = {k: [] for k in [
+            'gt_steps', 'one_step_preds', 'rec_step_preds',
+            'one_step_dist_means', 'one_step_dist_stds', 'one_step_dist_95pct_means', 'one_step_dist_95pct_stds',
+            'one_step_mses', 'rec_step_dist_means', 'rec_step_dist_stds', 'rec_step_dist_95pct_means',
+            'rec_step_dist_95pct_stds', 'rec_step_mses', 'rec_step_chamfers', 'rec_step_hausdorffs',
+            'rec_step_chamfer_to_last', 'rec_step_mse_to_last'
+        ]}
+
+        # Initialize recursive state: Shape (1, N, 3) for JAX
+        x_recursive_jax = jnp.array(states[series_start_idx])[jnp.newaxis, ...]
         previous_deltas = None
+        counter = 0
 
-        series_stats_dict = {
-            'gt_steps': [],
-            'one_step_preds': [],
-            'rec_step_preds': [],
-            'one_step_dist_means': [],
-            'one_step_dist_stds': [],
-            'one_step_dist_95pct_means': [],
-            'one_step_dist_95pct_stds': [],
-            'one_step_mses': [],
-            'rec_step_dist_means': [],
-            'rec_step_dist_stds': [],
-            'rec_step_dist_95pct_means': [],
-            'rec_step_dist_95pct_stds': [],
-            'rec_step_mses': [],
-            'rec_step_chamfers': [],
-            'rec_step_hausdorffs': [],
-            'rec_step_chamfer_to_last': [],
-            'rec_step_mse_to_last': []  }
-
-        x_recursive = torch.tensor(states[series_start_idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
-
-        for idx in tqdm(range(series_start_idx, series_end_idx)):
-            x_t_gt = torch.tensor(states[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
-            x_tp1_gt = torch.tensor(states_tp1[idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
-            x_tp1_gt_np = x_tp1_gt.squeeze(0).cpu().numpy().T
-            a_t = torch.tensor(actions[idx], dtype=torch.float32).unsqueeze(0).to(trainer.device)
-            delta_hat = forward(x_t_gt, a_t)
-            x_tp1_hat = x_t_gt + delta_hat.transpose(1, 2) / 100
-            delta_recursive = forward(x_recursive, a_t)
+        for idx in tqdm(range(series_start_idx, series_end_idx), leave=False):
+            # 1. Inputs
+            x_t_gt_np = states[idx]
+            x_tp1_gt_np = states_tp1[idx]
+            a_t_jax = jnp.array(actions[idx])[jnp.newaxis, ...]
             
-            if idx != series_start_idx:
-                x_recursive = x_recursive + delta_recursive.transpose(1, 2) / 100
-                 
-            one_step_sq_diff_arr = ((x_tp1_hat - x_tp1_gt)**2).squeeze(0).cpu().numpy()
-            rec_step_sq_diff_arr = ((x_recursive - x_tp1_gt)**2).squeeze(0).cpu().numpy()
-
-            one_step_dist_arr = (np.sum(one_step_sq_diff_arr, axis=0))**0.5 # gives 1 distance per point (x,y,z) -> d
-            rec_step_dist_arr = (np.sum(rec_step_sq_diff_arr, axis=0))**0.5
+            # 2. JAX Inference
+            # One-step (always from GT)
+            x_t_gt_jax = jnp.array(x_t_gt_np)[jnp.newaxis, ...]
+            delta_one_jax = trainer.predict(x_t_gt_jax, a_t_jax) / 100.0
+            x_tp1_hat_np = jax.device_get(x_t_gt_jax + delta_one_jax).squeeze(0)
             
-            #compute one_step statistics
-            one_step_mse = np.mean(one_step_sq_diff_arr)            
-            one_step_dist_mean = np.mean(one_step_dist_arr)
-            one_step_dist_std = np.std(one_step_dist_arr)
-            one_step_dist_95pct = np.percentile(one_step_dist_arr, 95)
-            one_step_dist_95pct_arr = np.array([x for x in one_step_dist_arr if x >= one_step_dist_95pct]) #can also do this with np.extract?
-            one_step_dist_95pct_mean = np.mean(one_step_dist_95pct_arr)
-            one_step_dist_95pct_std = np.std(one_step_dist_95pct_arr)
+            # Recursive step
+            delta_rec_jax = trainer.predict(x_recursive_jax, a_t_jax) / 100.0
+            x_recursive_jax = x_recursive_jax + delta_rec_jax
+            x_rec_np = jax.device_get(x_recursive_jax).squeeze(0)
 
-            #compute rec_step statistics
-            rec_step_mse = np.mean(rec_step_sq_diff_arr)
-            rec_step_dist_mean = np.mean(rec_step_dist_arr)
-            rec_step_dist_std = np.std(rec_step_dist_arr)
+            # 3. Stats Calculation (matching your original NumPy logic exactly)
+            # One-Step stats
+            one_step_sq_diff = (x_tp1_hat_np - x_tp1_gt_np)**2
+            one_step_dist_arr = np.linalg.norm(x_tp1_hat_np - x_tp1_gt_np, axis=-1)
+            one_step_95pct = np.percentile(one_step_dist_arr, 95)
+            one_step_95_arr = one_step_dist_arr[one_step_dist_arr >= one_step_95pct]
+
+            series_stats_dict['one_step_mses'].append(np.mean(one_step_sq_diff))
+            series_stats_dict['one_step_dist_means'].append(np.mean(one_step_dist_arr))
+            series_stats_dict['one_step_dist_stds'].append(np.std(one_step_dist_arr))
+            series_stats_dict['one_step_dist_95pct_means'].append(np.mean(one_step_95_arr))
+            series_stats_dict['one_step_dist_95pct_stds'].append(np.std(one_step_95_arr))
+
+            # Recursive stats
+            rec_step_sq_diff = (x_rec_np - x_tp1_gt_np)**2
+            rec_step_dist_arr = np.linalg.norm(x_rec_np - x_tp1_gt_np, axis=-1)
             rec_step_95pct = np.percentile(rec_step_dist_arr, 95)
-            rec_step_step_95pct_arr = np.array([x for x in rec_step_dist_arr if x >= rec_step_95pct])
-            rec_step_95pct_mean = np.mean(rec_step_step_95pct_arr)
-            rec_step_95pct_std = np.std(rec_step_step_95pct_arr)
+            rec_step_95_arr = rec_step_dist_arr[rec_step_dist_arr >= rec_step_95pct]
 
-            #save everything
-            series_stats_dict['gt_steps'].append(x_t_gt.squeeze().cpu().numpy().T)
-            series_stats_dict['one_step_preds'].append(x_tp1_hat.squeeze().cpu().numpy().T)
-            series_stats_dict['rec_step_preds'].append(x_recursive.squeeze().cpu().numpy().T)
-            series_stats_dict['one_step_dist_means'].append(one_step_dist_mean)
-            series_stats_dict['one_step_dist_stds'].append(one_step_dist_std)
-            series_stats_dict['one_step_dist_95pct_means'].append(one_step_dist_95pct_mean)
-            series_stats_dict['one_step_dist_95pct_stds'].append(one_step_dist_95pct_std)
-            series_stats_dict['one_step_mses'].append(one_step_mse)
-            series_stats_dict['rec_step_dist_means'].append(rec_step_dist_mean)
-            series_stats_dict['rec_step_dist_stds'].append(rec_step_dist_std)
-            series_stats_dict['rec_step_dist_95pct_means'].append(rec_step_95pct_mean)
-            series_stats_dict['rec_step_dist_95pct_stds'].append(rec_step_95pct_std)
-            series_stats_dict['rec_step_mses'].append(rec_step_mse)
+            series_stats_dict['rec_step_mses'].append(np.mean(rec_step_sq_diff))
+            series_stats_dict['rec_step_dist_means'].append(np.mean(rec_step_dist_arr))
+            series_stats_dict['rec_step_dist_stds'].append(np.std(rec_step_dist_arr))
+            series_stats_dict['rec_step_dist_95pct_means'].append(np.mean(rec_step_95_arr))
+            series_stats_dict['rec_step_dist_95pct_stds'].append(np.std(rec_step_95_arr))
 
+            # 4. Save Point Clouds (N, 3)
+            series_stats_dict['gt_steps'].append(x_t_gt_np)
+            series_stats_dict['one_step_preds'].append(x_tp1_hat_np)
+            series_stats_dict['rec_step_preds'].append(x_rec_np)
+
+            # 5. Complex Metrics (Chamfer/Hausdorff)
             if add_chamfer:
-                rec_step_chamfer =  chamfer_distance(x_recursive.permute(0,2,1), x_tp1_gt.permute(0,2,1))[0].item()
-                series_stats_dict['rec_step_chamfers'].append(rec_step_chamfer)
+                # Local Torch wrap for Chamfer
+                rec_torch = torch.from_numpy(x_rec_np).unsqueeze(0).float()
+                gt_torch = torch.from_numpy(x_tp1_gt_np).unsqueeze(0).float()
+                series_stats_dict['rec_step_chamfers'].append(chamfer_distance(rec_torch, gt_torch)[0].item())
 
-                #calcualte chamfer from current frame to goal (last) frame
-                # Transform x_recursive into the last frame's reference frame
-                x_rec_np = x_recursive.squeeze().cpu().numpy().T
+                # Chamfer to Last Frame Goal
                 x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
-                x_rec_in_last_frame = transform_points(x_rec_world, rotations[last_frame_idx], positions[last_frame_idx])
+                x_rec_in_last = transform_points(x_rec_world, rotations[last_frame_idx], positions[last_frame_idx])
                 
-                # Get the last frame gt points (preloaded before loop to avoid slow pickle access)
-                x_last_gt = torch.tensor(states_tp1[last_frame_idx], dtype=torch.float32).unsqueeze(0).to(trainer.device)
-                x_rec_last_frame_tensor = torch.tensor(x_rec_in_last_frame, dtype=torch.float32).unsqueeze(0).to(trainer.device)
-                
-                chamfer_to_last = chamfer_distance(
-                    x_rec_last_frame_tensor,
-                    x_last_gt
-                )[0].item()
-                print(chamfer_to_last)
-                series_stats_dict['rec_step_chamfer_to_last'].append(chamfer_to_last)
+                rec_last_torch = torch.from_numpy(x_rec_in_last).unsqueeze(0).float()
+                last_gt_torch = torch.from_numpy(states_tp1[last_frame_idx]).unsqueeze(0).float()
+                series_stats_dict['rec_step_chamfer_to_last'].append(chamfer_distance(rec_last_torch, last_gt_torch)[0].item())
 
+            if add_hausdorff:
+                # Mesh logic uses standard NumPy/PyVista workflow
+                mesh_data = data['meshes'][0]
+                base_mesh = pv.PolyData(mesh_data['points'], mesh_data['faces'])
+                recovered_mesh, current_deltas = invert_deltas_to_mesh(
+                    base_mesh, x_rec_np, data['tri_ids'][idx], data['bary_coords'][idx], 
+                    alpha=0.05, initial_guess=previous_deltas
+                )
+                previous_deltas = current_deltas
+                gt_mesh_pv = pv.PolyData(data['meshes_tp1'][idx]['points'], mesh_data['faces'])
+                
+                series_stats_dict['rec_step_hausdorffs'].append(compute_haussdorff_distance(gt_mesh_pv, recovered_mesh))
+                
+                if save_meshes and (counter + 1) % n_step == 0:
+                    save_comparison_turntable(recovered_mesh, gt_mesh_pv, 
+                                              eval_path / f"invert_deltas/series_{eval_series_idx}_step_{idx}.gif")
+
+            # 6. Recursive Reference Frame Update (The "Loop")
             if idx + 1 < series_end_idx:
-                #Transform into next frame reference
-                x_rec_np = x_recursive.squeeze().cpu().numpy().T
                 x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
                 x_rec_transformed = transform_points(x_rec_world, rotations[idx + 1], positions[idx + 1])
-                x_recursive = torch.tensor(x_rec_transformed, dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
+                x_recursive_jax = jnp.array(x_rec_transformed)[jnp.newaxis, ...]
 
             counter += 1
 
-            if add_hausdorff: # mesh reconstruction is pretty slow
-                mesh_data = data['meshes'][0]
-                base_mesh = pv.PolyData(mesh_data['points'], mesh_data['faces'])
-                tri_ids = data['tri_ids'][idx]
-                bary_coords = data['bary_coords'][idx]
-                gt_mesh = data['meshes_tp1'][idx]
-            
-                recovered_mesh, current_deltas = invert_deltas_to_mesh(
-                                                                        base_mesh, 
-                                                                        x_rec_np, 
-                                                                        tri_ids, 
-                                                                        bary_coords, 
-                                                                        alpha=0.05,
-                                                                        initial_guess=previous_deltas
-                                                                    )
-                previous_deltas = current_deltas
-                gt_mesh_pv = pv.PolyData(gt_mesh['points'], mesh_data['faces'])
-                filename = f"comparison_step_{idx}.gif"
-                if save_meshes and counter % n_step == 0:
-                    # print("Saving recon'd mesh turntables")
-                    save_comparison_turntable(recovered_mesh, 
-                                            gt_mesh_pv, 
-                                            eval_path /"surfaces/invert_deltas"/filename, 
-                                            n_frames=300, 
-                                            fps=15)
-                #compute hausdorff distance
-                rec_step_hausdorff = compute_haussdorff_distance(pv_mesh1=gt_mesh_pv, pv_mesh2=recovered_mesh)
-                series_stats_dict['rec_step_hausdorffs'].append(rec_step_hausdorff)
-
-            if plot_heatmaps and counter % n_step==0:
-                plot_spherical_heatmap(vectors=x_rec_np - x_tp1_gt_np, 
-                                            fig_path = eval_path/f"surfaces/heatmaps/spherical_heatmap_{idx}.png" )
-
-        #save everything again
-        all_stats_dict['all_gt_steps'].append(series_stats_dict['gt_steps'])
-        all_stats_dict['all_one_step_preds'].append(series_stats_dict['one_step_preds'])
-        all_stats_dict['all_rec_step_preds'].append(series_stats_dict['rec_step_preds'])
-        all_stats_dict['all_one_step_dist_means'].append(series_stats_dict['one_step_dist_means'])
-        all_stats_dict['all_one_step_dist_stds'].append(series_stats_dict['one_step_dist_stds'])
-        all_stats_dict['all_one_step_dist_95pct_means'].append(series_stats_dict['one_step_dist_95pct_means'])
-        all_stats_dict['all_one_step_dist_95pct_stds'].append(series_stats_dict['one_step_dist_95pct_stds'])
-        all_stats_dict['all_one_step_mses'].append(series_stats_dict['one_step_mses'])
-        all_stats_dict['all_rec_step_dist_means'].append(series_stats_dict['rec_step_dist_means'])
-        all_stats_dict['all_rec_step_dist_stds'].append(series_stats_dict['rec_step_dist_stds'])
-        all_stats_dict['all_rec_step_dist_95pct_means'].append(series_stats_dict['rec_step_dist_95pct_means'])
-        all_stats_dict['all_rec_step_dist_95pct_stds'].append(series_stats_dict['rec_step_dist_95pct_stds'])
-        all_stats_dict['all_rec_step_mses'].append(series_stats_dict['rec_step_mses'])
-        all_stats_dict['all_rec_step_chamfers'].append(series_stats_dict['rec_step_chamfers'])
-        all_stats_dict['all_rec_step_hausdorffs'].append(series_stats_dict['rec_step_hausdorffs'])
-
+        # Final map to global dict using your requested clean loop
+        for key in series_stats_dict:
+            all_stats_dict[f'all_{key}'].append(series_stats_dict[key])
     
-    # plot_eval_series(all_stats_dict,
-    #                   mode=plot_mode,
-    #                   max_cols=max_cols,
-    #                   n_step=n_step,
-    #                   fill_variation=True,
-    #                   add_mse=add_mse,
-    #                   add_chamfer=add_chamfer,
-    #                   add_hausdorff=add_hausdorff,
-    #                   fig_path=eval_path/"eval_series.png")
+    plot_eval_series(all_stats_dict,
+                      mode=plot_mode,
+                      max_cols=max_cols,
+                      n_step=n_step,
+                      fill_variation=True,
+                      add_mse=add_mse,
+                      add_chamfer=add_chamfer,
+                      add_hausdorff=add_hausdorff,
+                      fig_path=eval_path/"eval_series.png")
+
+    print(f"\nEvaluation of {num_series} series complete.")
+
     return all_stats_dict
     
 def eval_time(config, trainer):
@@ -466,7 +395,7 @@ if __name__ == "__main__":
     import yaml
 
     base_path = get_project_root()
-    run_name = "chamfer_1024_unmasked_seeded_tri_ids"
+    run_name = "jax_mse_2048_unmasked_unseeded"
     config_path = base_path / "runs" / run_name / "config_out.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
@@ -477,18 +406,17 @@ if __name__ == "__main__":
     eval_path = output_folder / "eval"
     eval_path.mkdir(exist_ok=True)
 
-    trainer.load(model_path = output_folder / "best_model.pth")
-    trainer.net.eval()
+    trainer.load(model_path = output_folder / "checkpoints" / "248")
     # evaluate(config, trainer)
     evaluate_series(config, trainer,
-                    add_mse=False,
-                    add_chamfer=False, 
+                    add_mse=True,
+                    add_chamfer=True, 
                     add_hausdorff=False,
                     plot_heatmaps=True,
                     plot_mode='dist',
                     num_series=1, min_series_length=60, 
-                    n_step=1, max_cols=7, save_meshes=False)
-    # eval_time(config, trainer)
+                    n_step=5, max_cols=7, save_meshes=False)
+    # # eval_time(config, trainer)
 
     # render_series(config, trainer, 
     #               num_series=1, 

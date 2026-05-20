@@ -3,12 +3,13 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import json
+import ast
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 
 from forge_net.data.dataloaders import GetSingleStepDataLoaders
 from forge_net.utils.common import actions_from_feature_map
-from forge_net.utils.common import MeshContainer, meshcontainer_to_pv
+from forge_net.utils.common import MeshContainer, meshcontainer_to_volume
 from forge_net.utils.math import *
 
 def process_series(args):
@@ -31,30 +32,29 @@ def process_series(args):
     for i in range(len(group_df) - 1):
         row_t = group_df.iloc[i]
         row_tp1 = group_df.iloc[i + 1]
+       
 
         # Input mesh (coords from frame i)
-        mesh_data_t = json.loads(row_t["result"])
-        num_steps_t = len(mesh_data_t["Steps"])
-        vertices_t = np.array(mesh_data_t["Vertices"]).reshape(num_steps_t,-1)[-1]
-        # vertices_t = mesh_data_t["Vertices"]
-        triangles_t = mesh_data_t["Triangles"]
-        tmp_mesh_t = MeshContainer.from_db(vertices_t, triangles_t)
-        pv_mesh_t = meshcontainer_to_pv(tmp_mesh_t)
+        num_steps_t = row_t["solver_steps"]
+        vertices_t = ast.literal_eval(row_t["vertices"])
+        triangles_t = ast.literal_eval(row_t["triangles"])
+        tmp_mesh_t = MeshContainer.from_db(vertices_t, triangles=None, tets=triangles_t)
+        pv_mesh_t = meshcontainer_to_volume(tmp_mesh_t)
+        pv_mesh_t
+        print(tmp_mesh_t)
+        print(type(pv_mesh_t))
 
-        mesh_data_tp1 = json.loads(row_tp1["result"])
-        num_steps_tp1 = len(mesh_data_tp1["Steps"])
-        vertices_tp1 = np.array(mesh_data_tp1["Vertices"]).reshape(num_steps_tp1,-1)[-1]
-        # print(mesh_data_tp1, len(mesh_data_tp1))
-        # print(mesh_data_tp1["Vertices"], len(mesh_data_tp1["Vertices"]))
-        # vertices_tp1 = mesh_data_tp1["Vertices"]
-        triangles_tp1 = mesh_data_tp1["Triangles"]
-        tmp_mesh_tp1 = MeshContainer.from_db(vertices_tp1, triangles_tp1)
-        pv_mesh_tp1 = meshcontainer_to_pv(tmp_mesh_tp1)
+        num_steps_tp1 = row_tp1["solver_steps"]
+        vertices_tp1 = ast.literal_eval(row_tp1["vertices"])
+        triangles_tp1 = ast.literal_eval(row_tp1["triangles"])
+        tmp_mesh_tp1 = MeshContainer.from_db(vertices_t, triangles=None, tets=triangles_t)
+        pv_mesh_tp1 = meshcontainer_to_volume(tmp_mesh_t)
+        print(pv_mesh_t)
+        print(tmp_mesh_t)
+        print(type(pv_mesh_t))
         
-        s_tp1 = np.sum(np.array(mesh_data_tp1["Steps"]))
-        p_tp1 = json.loads(row_tp1["position"])
-        r_tp1 = json.loads(row_tp1["rotation"])
-        
+        p_tp1 = ((row_tp1["x_max_band"] + row_tp1["x_min_band"]) / 2, 0 , 0)
+        r_tp1 = eulerxyz_to_quat((row_tp1["rotation_euler_x"], 0, 0)) #-> quaternion
         pv_mesh_t.points = transform_points(np.array(pv_mesh_t.points), np.array(r_tp1), np.array(p_tp1))
         pv_mesh_tp1.points = transform_points(np.array(pv_mesh_tp1.points), np.array(r_tp1), np.array(p_tp1))
         
@@ -70,21 +70,22 @@ def process_series(args):
             tri_mask = None
 
         if total_points is not None:
-            try:
+            # try:
 
-                coords_t, point_triangle_ids, bary_coords = barycentric_sampling(
-                    pv_mesh_t, total_points, tri_mask=tri_mask, seed=seed
-                )
+            coords_t, point_triangle_ids, bary_coords = barycentric_sampling(
+                pv_mesh_t, total_points, seed=seed
+            )
+            print("sampled barycenters:" , coords_t)
+            tri_ids_list.append(point_triangle_ids)
+            bary_coords_list.append(bary_coords)
+
+            coords_tp1 = update_barycentric_points(pv_mesh_tp1, point_triangle_ids, bary_coords)
                 
-                tri_ids_list.append(point_triangle_ids)
-                bary_coords_list.append(bary_coords)
-
-                coords_tp1 = update_barycentric_points(pv_mesh_tp1, point_triangle_ids, bary_coords)
-
                 
-            except:
-                print(f"Skipping hit in series {series_id} - no press contact")
-                continue
+            # except:
+
+            #     print(f"Skipping hit in series {series_id} - no press contact")
+            #     continue
         
         else:
             
@@ -154,7 +155,7 @@ def n_extract_data(db_path, total_points, lines, n_workers=None, mask_points=Non
     """
     # Read data from database
     conn = sqlite3.connect(db_path)
-    df = pd.read_sql_query(f"SELECT * FROM strike LIMIT {int(lines)};", conn)
+    df = pd.read_sql_query(f"SELECT * FROM hits LIMIT {int(lines)};", conn)
     conn.close()
     
     # Prepare arguments for each series
@@ -257,6 +258,8 @@ def make_dataloaders(config):
     c_t = data['coords_t']
     c_tp1 = data['coords_tp1']
     
+    print(type(c_t), len(c_t))
+    raise()
     action_features = config["network"]["action_features"]
     # Build only what's in the config
     actions = actions_from_feature_map(action_features, data)

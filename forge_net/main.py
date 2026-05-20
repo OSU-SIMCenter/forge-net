@@ -1,5 +1,7 @@
 import yaml
-from forge_net.data.process_data import make_dataloaders, make_dataset
+# from forge_net.data.process_data import make_dataloaders, make_dataset
+from forge_net.data.process_data_fanglei import make_dataloaders, make_dataset
+
 from forge_net.utils.common import get_project_root
 from forge_net.model.trainer import ForgeNetTrainer
 from forge_net.eval import evaluate, evaluate_series
@@ -7,7 +9,7 @@ from forge_net.eval import evaluate, evaluate_series
 def main():
 
     base_path = get_project_root()
-    config_path = base_path / "configs" / "experiment_invert_deltas.yml"
+    config_path = base_path / "configs" / "jax_volume.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     
@@ -16,6 +18,7 @@ def main():
     config["run"]["run_folder"] = run_folder
 
     make_dataset(config=config)
+    raise()
     train_loader, test_loader = make_dataloaders(config)
     trainer = ForgeNetTrainer(config, train_loader, test_loader)
     trainer.train()

@@ -116,6 +116,180 @@ def update_barycentric_points(deformed_mesh: pv.PolyData, triangle_ids: np.array
     
     return np.array(updated_points)
 
+def tetrahedral_barycentric_sampling(mesh: pv.UnstructuredGrid, 
+                                        num_points: int, tet_mask: np.ndarray = None, 
+                                        node_features: np.ndarray = None, seed: int = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    '''
+    Returns sampled points inside a tetrahedral mesh and their barycentric information.
+    
+    Args:
+        mesh: Input pyvista UnstructuredGrid (pure tetrahedra)
+        num_points: Number of points to sample
+        tet_mask: Optional mask for tetrahedra to sample from
+        seed: Random seed for reproducible sampling
+    
+    Returns:
+        points: (N, 3) sampled point positions
+        global_tet_ids: (N,) which tetrahedron each point belongs to (in original mesh indexing)
+        barycentric_coords: (N, 4) barycentric coordinates (b0, b1, b2, b3)
+    '''
+    if seed is not None:
+        rng = np.random.RandomState(seed)
+    else:
+        rng = np.random.RandomState()
+
+    # Compute volume instead of area
+    mesh = mesh.compute_cell_sizes()
+    
+    # Extract tetrahedral connectivity. Assuming pure tet mesh: [4, v0, v1, v2, v3, 4, ...]
+    cells = mesh.cells.reshape(-1, 5)
+    tetrahedra = cells[:, 1:] 
+    
+    tet_volumes = np.abs(mesh.cell_data["Volume"])
+    points = mesh.points
+    
+    # Store original tet indices before masking
+    original_tet_indices = np.arange(len(tetrahedra))
+    
+    if tet_mask is not None:
+        tetrahedra = tetrahedra[tet_mask]
+        tet_volumes = tet_volumes[tet_mask]
+        original_tet_indices = original_tet_indices[tet_mask]
+        
+    total_volume = np.sum(tet_volumes)
+    num_tetrahedra = len(tet_volumes)
+    assert num_tetrahedra > 0, "Tetrahedral mask is empty"
+    
+    # --- 1. Distribute points based on volume ---
+    # Vectorized equivalent of the nested floor loop
+    counts = np.floor((tet_volumes / total_volume) * num_points).astype(int)
+    point_tet_ids = np.repeat(np.arange(num_tetrahedra), counts).tolist()
+    
+    # Assign remaining points randomly
+    remainder = num_points - len(point_tet_ids)
+    if remainder > 0:
+        point_tet_ids.extend(rng.randint(0, num_tetrahedra, size=remainder))
+        
+    point_tet_ids = np.array(point_tet_ids)
+    
+    # --- 2. Compute 3D Barycentric Coordinates ---
+    # We need 3 random variables for a 3D simplex (tetrahedron)
+    r0 = rng.random(num_points)
+    r1 = rng.random(num_points)
+    r2 = rng.random(num_points)
+    
+    # Mathematical roots for uniform 3D distribution
+    r0_cbrt = np.cbrt(r0)
+    r1_sqrt = np.sqrt(r1)
+    
+    b0 = 1.0 - r0_cbrt
+    b1 = r0_cbrt * (1.0 - r1_sqrt)
+    b2 = r0_cbrt * r1_sqrt * (1.0 - r2)
+    b3 = r0_cbrt * r1_sqrt * r2
+    
+    barycentric_coords = np.column_stack((b0, b1, b2, b3))
+    
+    # --- 3. Compute final point positions ---
+    # Fetch the 4 vertices for every selected tetrahedron
+    tet_indices = tetrahedra[point_tet_ids]
+    
+    v0 = points[tet_indices[:, 0]]
+    v1 = points[tet_indices[:, 1]]
+    v2 = points[tet_indices[:, 2]]
+    v3 = points[tet_indices[:, 3]]
+    
+    # Apply weights using broadcasting
+    sampled_points = (b0[:, None] * v0 + 
+                      b1[:, None] * v1 + 
+                      b2[:, None] * v2 + 
+                      b3[:, None] * v3)
+    
+    global_tet_ids = original_tet_indices[point_tet_ids]
+    
+    # --- NEW: Compute interpolated features ---
+    sampled_features = None
+    if node_features is not None:
+        f0 = node_features[tet_indices[:, 0]]
+        f1 = node_features[tet_indices[:, 1]]
+        f2 = node_features[tet_indices[:, 2]]
+        f3 = node_features[tet_indices[:, 3]]
+        
+        # Handle both 1D (e.g., single temperature value) and 2D features (e.g., RGB colors, vectors)
+        if node_features.ndim == 1:
+            sampled_features = b0 * f0 + b1 *f1 + b2 * f2 + b3 * f3
+        else:
+            sampled_features = b0[:, None] * f0 + b1[:, None] * f1 + b2[:, None] * f2 + b3[:, None] * f3
+
+    return sampled_points, global_tet_ids, barycentric_coords, sampled_features
+
+def update_tetrahedral_barycentric_points(
+    deformed_mesh: pv.UnstructuredGrid, 
+    tet_ids: np.ndarray, 
+    barycentric_coords: np.ndarray,
+    node_features: np.ndarray = None
+) -> tuple[np.ndarray, np.ndarray]:
+    '''
+    Updates point positions and features based on a deformed tetrahedral mesh 
+    using stored barycentric coordinates.
+    
+    Args:
+        deformed_mesh: Deformed mesh (pyvista.UnstructuredGrid).
+        tet_ids: (N,) array of tetrahedron indices for each point.
+        barycentric_coords: (N, 4) array of barycentric coordinates.
+        node_features: (V,) or (V, M) optional array of vertex features for the deformed mesh.
+    
+    Returns:
+        updated_points: (N, 3) updated spatial positions.
+        updated_features: (N,) or (N, M) updated features (or None if node_features not provided).
+    '''
+    # Extract the connectivity array for pure tetrahedra
+    cells = deformed_mesh.cells.reshape(-1, 5)
+    tetrahedra = cells[:, 1:] 
+    
+    # Extract all vertex positions
+    vertices = deformed_mesh.points
+    
+    # Get the vertex indices for the specific tetrahedra containing our points
+    tet_indices = tetrahedra[tet_ids]
+    
+    # Fetch the 3D coordinates of the 4 vertices for each tetrahedron
+    v0 = vertices[tet_indices[:, 0]]
+    v1 = vertices[tet_indices[:, 1]]
+    v2 = vertices[tet_indices[:, 2]]
+    v3 = vertices[tet_indices[:, 3]]
+    
+    # Extract the barycentric weights
+    # We create a 1D version for scalar features, and a 2D version for spatial broadcasting
+    b0_flat = barycentric_coords[:, 0]
+    b1_flat = barycentric_coords[:, 1]
+    b2_flat = barycentric_coords[:, 2]
+    b3_flat = barycentric_coords[:, 3]
+    
+    b0_vec = b0_flat[:, None]
+    b1_vec = b1_flat[:, None]
+    b2_vec = b2_flat[:, None]
+    b3_vec = b3_flat[:, None]
+    
+    # Compute the new positions simultaneously using vectorized addition
+    updated_points = b0_vec * v0 + b1_vec * v1 + b2_vec * v2 + b3_vec * v3
+    
+    # --- Compute updated features ---
+    updated_features = None
+    if node_features is not None:
+        f0 = node_features[tet_indices[:, 0]]
+        f1 = node_features[tet_indices[:, 1]]
+        f2 = node_features[tet_indices[:, 2]]
+        f3 = node_features[tet_indices[:, 3]]
+        
+        if node_features.ndim == 1:
+            # For 1D scalar features (e.g., temperature)
+            updated_features = (b0_flat * f0) + (b1_flat * f1) + (b2_flat * f2) + (b3_flat * f3)
+        else:
+            # For multi-dimensional features (e.g., RGB colors, velocity vectors)
+            updated_features = (b0_vec * f0) + (b1_vec * f1) + (b2_vec * f2) + (b3_vec * f3)
+            
+    return updated_points, updated_features
+
 def triangle_mask_from_window(mesh: pv.PolyData, center: float, window_length: float, bc_length: float = 0.0) -> np.ndarray:
     '''
     Creates a boolean mask for triangles based on their centroid's x-coordinate.

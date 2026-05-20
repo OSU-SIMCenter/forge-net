@@ -251,6 +251,30 @@ def make_dataset(config):
 
     np.savez(data_out, **data)
 
+
+def jax_dataloader_wrapper(dataloader):
+    """
+    Wraps a PyTorch DataLoader to yield NumPy arrays instead of PyTorch Tensors.
+    Ensures the coordinate shape is (B, N, 3) for the JAX/Flax model.
+    """
+    for batch in dataloader:
+        # Assuming batch yields a tuple like: (coords_t, actions, coords_tp1)
+        # Adjust unpacking if your dataloader yields a dict or different order
+        jax_batch = []
+        for item in batch:
+            # 1. Convert PyTorch tensor to NumPy array
+            if hasattr(item, 'numpy'):
+                item = item.numpy()
+            
+            # 2. Revert transposed shapes if GetSingleStepDataLoaders altered them
+            # If the shape is (Batch, 3, N), transpose it back to (Batch, N, 3)
+            if item.ndim == 3 and item.shape[1] == 3 and item.shape[2] != 3:
+                item = np.transpose(item, (0, 2, 1)) 
+            
+            jax_batch.append(item)
+            
+        yield tuple(jax_batch)
+
 def make_dataloaders(config):
     data_path = config["datasets"]["data_out"]
     data = np.load(data_path)
@@ -261,11 +285,14 @@ def make_dataloaders(config):
     # Build only what's in the config
     actions = actions_from_feature_map(action_features, data)
  
-    train_loader, test_loader = GetSingleStepDataLoaders(
+    train_loader_pt, test_loader_pt = GetSingleStepDataLoaders(
         coords_t=c_t,       
         coords_tp1=c_tp1,
         actions=actions,
         batch_size=config["network"]["batch_size"]
         )
+
+    train_loader = lambda: jax_dataloader_wrapper(train_loader_pt)
+    test_loader = lambda: jax_dataloader_wrapper(test_loader_pt)
     
     return(train_loader, test_loader)
