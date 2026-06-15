@@ -6,9 +6,13 @@ import flax.linen as nn
 from flax.training import train_state
 import optax
 import orbax.checkpoint as ocp
-from forge_net.model.model import ForgeNet
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 import numpy as np
+
+_ARCH_MODULES = {
+    "large": "forge_net.model.model",
+    "small": "forge_net.model.small_model",
+}
 
 # We need a custom TrainState to handle BatchNorm statistics
 class TrainState(train_state.TrainState):
@@ -52,6 +56,7 @@ class ForgeNetTrainer:
         self.best_epoch = resume_epoch if resume_best_loss else 0
         
         if log_to_tb:
+            from torch.utils.tensorboard import SummaryWriter
             self.writer = SummaryWriter(log_dir=self.output_folder / 'logs')
         
         if resume_epoch > 0:
@@ -77,12 +82,24 @@ class ForgeNetTrainer:
         print(f"\nInitializing model with point_size={point_size}, latent_size={self.config['network']['latent_size']}")
         
         # 2. Instantiate Flax Model
-        self.net = ForgeNet(
+        arch = self.config["network"].get("arch", "large")
+        module_path = _ARCH_MODULES.get(arch)
+        if module_path is None:
+            raise ValueError(f"Unknown arch '{arch}'. Choose from: {list(_ARCH_MODULES)}")
+
+        import importlib
+        ForgeNet = importlib.import_module(module_path).ForgeNet
+
+        net_kwargs = dict(
             latent_size=self.config["network"]["latent_size"],
             action_dims=self.config["network"]["action_dims"],
             dropout=self.config["network"]["dropout"],
-            use_res=self.config["network"]["use_res"]
         )
+        if arch == "large":
+            net_kwargs["use_res"] = self.config["network"]["use_res"]
+
+        print(f"Architecture: {arch} ({module_path})")
+        self.net = ForgeNet(**net_kwargs)
 
         # 3. Initialize Variables
         rng = jax.random.PRNGKey(self.seed)
@@ -272,9 +289,8 @@ class ForgeNetTrainer:
             print(write_string)
             
             self.on_epoch_end(i, self.train_loss, self.test_loss)
-            
-            # Optional: Add your plot_loss implementation here
-            
+            self.plot_loss()
+
             if self.early_stop:
                 print(f"\nStopping training at epoch {i}")
                 break
@@ -353,6 +369,29 @@ class ForgeNetTrainer:
             return lambda delta_pred, delta_gt: jnp.mean((delta_pred - delta_gt) ** 2)
         else:
             raise ValueError(f"Unknown loss: {self.config['network']['loss']}")
+
+    def plot_loss(self):
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        epochs = range(self.start_epoch, self.start_epoch + len(self.train_loss_list))
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(epochs, self.train_loss_list, label='Train Loss')
+        ax.plot(epochs, self.test_loss_list, label='Test Loss')
+
+        if self.best_epoch is not None and self.best_loss < float('inf'):
+            ax.axvline(x=self.best_epoch, color='green', linestyle='--', alpha=0.6, label=f'Best epoch ({self.best_epoch})')
+
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Loss')
+        ax.set_title('Training and Test Loss')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        save_path = self.output_folder / 'loss_curve.png'
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
 
     def close(self):
         self.writer.close()

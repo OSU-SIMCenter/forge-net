@@ -4,12 +4,13 @@ from forge_net.utils.common import *
 from forge_net.utils.math import *
 from forge_net.utils.plotting import * 
 from forge_net.invert_deltas import invert_deltas_to_mesh, save_comparison_turntable
-# from forge_net.loss.chamfer import chamfer_distance
-from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
+from forge_net.loss.chamfer_jax import chamfer_distance_jax
+# from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
 from tqdm import tqdm 
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
+
 def evaluate(config, trainer):
     '''
     Evaluate a trained ForgeNet network by creating some simple scatter and vector plots

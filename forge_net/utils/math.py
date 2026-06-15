@@ -7,7 +7,76 @@ import math
 from scipy.spatial.transform import Rotation
 from scipy.interpolate import RBFInterpolator
 
-def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array = None, seed: int = None) -> tuple[np.array, np.array, np.array]:
+
+import jax
+import jax.numpy as jnp
+from typing import NamedTuple
+from functools import partial
+
+class MeshData(NamedTuple):
+    """A JAX-compatible PyTree for storing mesh arrays."""
+    vertices: jnp.ndarray   # Shape: (V, 3)
+    triangles: jnp.ndarray  # Shape: (F, 3)
+    areas: jnp.ndarray      # Shape: (F,)
+
+
+@partial(jax.jit, static_argnames=['num_points', 'num_faces'])
+def barycentric_sampling(
+    key: jax.Array, 
+    mesh: MeshData, 
+    num_points: int,
+    num_faces: int,
+    tri_mask: jnp.ndarray
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """
+    JIT-compiled barycentric sampling from a MeshData PyTree.
+    """
+
+    masked_areas = jnp.where(tri_mask, mesh.areas, 0.0)
+    probs = tri_mask.astype(jnp.float32)
+    probs = probs / jnp.sum(probs)
+    # probs = masked_areas / jnp.sum(masked_areas)
+    key, subkey1, subkey2 = jax.random.split(key, 3)
+    
+
+    sampled_tri_indices = jax.random.choice(
+        subkey1,
+        # jnp.arange(len(mesh.triangles)),
+        a=num_faces,
+        shape=(num_points,),
+        p=probs
+    )
+
+    r = jax.random.uniform(subkey2, shape=(num_points, 2))
+    sqrt_r0 = jnp.sqrt(r[:, 0])
+    
+    b0 = 1.0 - sqrt_r0
+    b1 = sqrt_r0 * (1.0 - r[:, 1])
+    b2 = r[:, 1] * sqrt_r0
+    barycentric_coords = jnp.stack([b0, b1, b2], axis=-1)
+
+    tri_vertices = mesh.vertices[mesh.triangles[sampled_tri_indices]]
+    sampled_points = jnp.sum(tri_vertices * barycentric_coords[..., None], axis=1)
+    
+    return sampled_points, sampled_tri_indices, barycentric_coords, key
+
+
+@jax.jit
+def update_barycentric_points(
+    mesh: MeshData, 
+    triangle_ids: jnp.ndarray, 
+    barycentric_coords: jnp.ndarray
+        ) -> jnp.ndarray:
+    """
+    JIT-compiled point updates based on deformed mesh data.
+    """
+
+    tri_vertices = mesh.vertices[mesh.triangles[triangle_ids]]
+    updated_points = jnp.sum(tri_vertices * barycentric_coords[..., None], axis=1)
+    
+    return updated_points
+
+def barycentric_sampling_np(mesh: pv.PolyData, num_points: int, tri_mask: np.array = None, seed: int = None) -> tuple[np.array, np.array, np.array]:
     '''
     Returns sampled points and their barycentric information.
     
@@ -86,7 +155,7 @@ def barycentric_sampling(mesh: pv.PolyData, num_points: int, tri_mask: np.array 
     
     return np.array(sampled_points), np.array(global_triangle_ids), np.array(barycentric_coords)
 
-def update_barycentric_points(deformed_mesh: pv.PolyData, triangle_ids: np.array, barycentric_coords: np.array) -> np.array:
+def update_barycentric_points_np(deformed_mesh: pv.PolyData, triangle_ids: np.array, barycentric_coords: np.array) -> np.array:
     '''
     Updates point positions based on deformed mesh using stored barycentric coordinates.
     
@@ -227,7 +296,7 @@ def update_tetrahedral_barycentric_points(
     tet_ids: np.ndarray, 
     barycentric_coords: np.ndarray,
     node_features: np.ndarray = None
-) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
     '''
     Updates point positions and features based on a deformed tetrahedral mesh 
     using stored barycentric coordinates.
@@ -437,18 +506,105 @@ def compute_haussdorff_distance(pv_mesh1, pv_mesh2, samples=1000):
     hausdorff_dist = max(max(dists_1to2), max(dists_2to1))  # https://en.wikipedia.org/wiki/Hausdorff_distance
     return(hausdorff_dist)
  
-
-def transform_points(points, quaternion, translation_vector):
+def transform_points_np(points, quaternion, translation_vector):
     return Rotation.from_quat(quaternion).apply(points) + translation_vector
 
-def untransform_points(points, quaternion, translation_vector):
+def untransform_points_np(points, quaternion, translation_vector):
     return Rotation.from_quat(quaternion).inv().apply(np.array(points) - np.array(translation_vector))
 
-def quat_to_eulerxyz(quaternion):
+def quat_to_eulerxyz_np(quaternion):
     return Rotation.from_quat(quaternion).as_euler('xyz',degrees=True)
 
-def eulerxyz_to_quat(xyz_degtuple):
+def eulerxyz_to_quat_np(xyz_degtuple):
     return Rotation.from_euler('xyz',xyz_degtuple,degrees=True).as_quat()
+
+@jax.jit
+def transform_points(points, quaternion, translation_vector):
+    """
+    Rotates points by a quaternion and adds a translation.
+    
+    Args:
+        points: Array of shape (3,) or (N, 3).
+        quaternion: Array of shape (4,) in (x, y, z, w) format.
+        translation_vector: Array of shape (3,).
+    """
+    u = quaternion[:3]
+    w = quaternion[3]
+    
+    # jnp.cross automatically handles broadcasting if points is (N, 3)
+    # jax.debug.breakpoint()
+    uv = jnp.cross(u, points)
+    uuv = jnp.cross(u, uv)
+    
+    # Hamilton product rotation formulation: v' = v + 2w(u x v) + 2(u x (u x v))
+    rotated_points = points + 2.0 * w * uv + 2.0 * uuv
+    return rotated_points + translation_vector
+
+@jax.jit
+def untransform_points(points, quaternion, translation_vector):
+    """
+    Subtracts a translation from points, then applies the inverse quaternion rotation.
+    """
+    shifted_points = points - translation_vector
+    
+    # The inverse of a unit quaternion (x,y,z,w) is its conjugate (-x,-y,-z,w)
+    u = -quaternion[:3] 
+    w = quaternion[3]
+    
+    uv = jnp.cross(u, shifted_points)
+    uuv = jnp.cross(u, uv)
+    
+    return shifted_points + 2.0 * w * uv + 2.0 * uuv
+
+@jax.jit
+def quat_to_eulerxyz(quaternion):
+    """
+    Converts a quaternion (x, y, z, w) to extrinsic 'xyz' Euler angles in degrees.
+    Matches scipy.spatial.transform.Rotation.as_euler('xyz', degrees=True).
+    """
+    x, y, z, w = quaternion[0], quaternion[1], quaternion[2], quaternion[3]
+    
+    # Roll (x-axis rotation)
+    sinr_cosp = 2.0 * (w * x + y * z)
+    cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+    roll = jnp.arctan2(sinr_cosp, cosr_cosp)
+    
+    # Pitch (y-axis rotation)
+    sinp = 2.0 * (w * y - z * x)
+    # Clip sinp to [-1, 1] to safely prevent NaNs from floating-point errors (gimbal lock bounds)
+    sinp = jnp.clip(sinp, -1.0, 1.0) 
+    pitch = jnp.arcsin(sinp)
+    
+    # Yaw (z-axis rotation)
+    siny_cosp = 2.0 * (w * z + x * y)
+    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+    yaw = jnp.arctan2(siny_cosp, cosy_cosp)
+    
+    # Return stack converted to degrees
+    return jnp.array([roll, pitch, yaw]) * (180.0 / jnp.pi)
+
+@jax.jit
+def eulerxyz_to_quat(xyz_degtuple):
+    """
+    Converts extrinsic 'xyz' Euler angles in degrees to a quaternion (x, y, z, w).
+    Matches scipy.spatial.transform.Rotation.from_euler('xyz', ..., degrees=True).
+    """
+    xyz = jnp.array(xyz_degtuple) * (jnp.pi / 180.0)
+    roll, pitch, yaw = xyz[0], xyz[1], xyz[2]
+    
+    cr = jnp.cos(roll * 0.5)
+    sr = jnp.sin(roll * 0.5)
+    cp = jnp.cos(pitch * 0.5)
+    sp = jnp.sin(pitch * 0.5)
+    cy = jnp.cos(yaw * 0.5)
+    sy = jnp.sin(yaw * 0.5)
+    
+    x = sr * cp * cy - cr * sp * sy
+    y = cr * sp * cy + sr * cp * sy
+    z = cr * cp * sy - sr * sp * cy
+    w = cr * cp * cy + sr * sp * sy
+    
+    return jnp.array([x, y, z, w])
 
 def point_cloud_stats(points):
     """

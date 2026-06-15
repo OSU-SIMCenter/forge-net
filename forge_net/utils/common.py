@@ -3,6 +3,7 @@ import pyvista as pv
 from pathlib import Path
 
 from forge_net.utils.math import quat_to_eulerxyz, transform_points, untransform_points
+from forge_net.utils.math import quat_to_eulerxyz_np, transform_points_np, untransform_points_np
 import ast
 
 class MeshContainer:
@@ -59,7 +60,7 @@ def actions_from_feature_map(action_features, data):
     feature_map = {
         "steps": lambda: data['steps'],
         "positions": lambda: data['positions'][:, 0].reshape(-1, 1), #if positions we only care about translation in X
-        "rotations": lambda: np.array([[quat_to_eulerxyz(quat)[0]] for quat in data['rotations']]) #if rotations we only care about rotation about x
+        "rotations": lambda: np.array([[quat_to_eulerxyz_np(quat)[0]] for quat in data['rotations']]) #if rotations we only care about rotation about x
     }
     return np.hstack([feature_map[f]() for f in action_features])
 
@@ -85,15 +86,16 @@ def get_tool_mesh(points, translation, rotation, press_info=None, num_presses=2,
     directions = np.array([0, 1, 2])
     press_dir = np.array(press_info.direction)
     # apply transformation to mesh
-    transformed_points = transform_points(points, rotation, translation)
+    transformed_points = transform_points_np(points, rotation, translation)
     # find the directions we want to check against 
     # (if direction is [0,1,0] we want to check indices 0,2 ignoring y)
     directions_to_check = directions[~np.array(press_dir, dtype=bool)]
+    den = 1.0
     points_in_range = transformed_points[
-        (transformed_points[:, directions_to_check[0]] >= -1 * press_info.width / 2)
-        & (transformed_points[:, directions_to_check[0]] <= press_info.width / 2)
-        & (transformed_points[:, directions_to_check[1]] >= -1 * press_info.height / 2)
-        & (transformed_points[:, directions_to_check[1]] <= press_info.height / 2)
+        (transformed_points[:, directions_to_check[0]] >= -1 * press_info.width / den)
+        & (transformed_points[:, directions_to_check[0]] <= press_info.width / den)
+        & (transformed_points[:, directions_to_check[1]] >= -1 * press_info.height / den)
+        & (transformed_points[:, directions_to_check[1]] <= press_info.height / den)
     ]
     direction_idx = press_info.direction.index(1)
     vals = points_in_range[:, direction_idx]
@@ -121,7 +123,8 @@ def get_tool_mesh(points, translation, rotation, press_info=None, num_presses=2,
     
     if ref == 'tool': # rotate the tools
         for plane in planes:
-            plane.points = untransform_points(plane.points, rotation, translation)
+    
+            plane.points = np.array(untransform_points_np(np.array(plane.points), rotation, translation))
     
     return planes
 

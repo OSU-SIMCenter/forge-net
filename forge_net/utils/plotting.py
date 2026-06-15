@@ -900,9 +900,10 @@ def create_deformation_gif_parallel(pred_data: List[Dict[str, np.ndarray]],
     """
     os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
     total_frames = len(pred_data)
-    
     # Calculate global bounds to anchor cameras
     all_points = [d['points'] for d in pred_data]
+
+   
     if gt_data:
         all_points.extend([d['points'] for d in gt_data])
     
@@ -911,7 +912,6 @@ def create_deformation_gif_parallel(pred_data: List[Dict[str, np.ndarray]],
         
         translations = [a['translation'] for a in actions]
         rotations = [r['rotation'] for r in actions]
-
         all_presses = [
                         get_tool_mesh(points, translation, rotation)
                         for points, translation, rotation in zip(all_points, translations, rotations)

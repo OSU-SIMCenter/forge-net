@@ -1,6 +1,7 @@
-import yaml
-# from forge_net.data.process_data import make_dataloaders, make_dataset
-from forge_net.data.process_data_fanglei import make_dataloaders, make_dataset
+import yaml, argparse
+from pathlib import Path
+from forge_net.data.process_data import make_dataloaders, make_dataset
+# from forge_net.data.process_data_fanglei import make_dataloaders, make_dataset
 
 from forge_net.utils.common import get_project_root
 from forge_net.model.trainer import ForgeNetTrainer
@@ -9,16 +10,26 @@ from forge_net.eval import evaluate, evaluate_series
 def main():
 
     base_path = get_project_root()
-    config_path = base_path / "configs" / "jax_volume.yml"
-    with open(config_path, 'r') as file:
+
+    parser = argparse.ArgumentParser(description="Load experiment configuration from a YAML file.")
+    parser.add_argument(
+        "--config", 
+        type=Path, 
+        default=None,
+        help="Path to the YAML configuration file"
+    )
+    args = parser.parse_args()
+    assert args.config is not None, print("Please provide a valid yaml config file.")
+    with open(args.config, 'r') as file:
         config = yaml.safe_load(file)
+
     
     run_folder = base_path / "runs" / config["run"]["run_name"]
     assert not run_folder.exists(), print("Run already exists")
     config["run"]["run_folder"] = run_folder
 
     make_dataset(config=config)
-    raise()
+    # raise()
     train_loader, test_loader = make_dataloaders(config)
     trainer = ForgeNetTrainer(config, train_loader, test_loader)
     trainer.train()

@@ -8,7 +8,7 @@ from multiprocessing import Pool, cpu_count
 
 from forge_net.data.dataloaders import GetSingleStepDataLoaders
 from forge_net.utils.common import actions_from_feature_map
-from forge_net.utils.common import MeshContainer, meshcontainer_to_pv
+from forge_net.utils.common import MeshContainer, meshcontainer_to_surface
 from forge_net.utils.math import *
 
 def process_series(args):
@@ -39,7 +39,7 @@ def process_series(args):
         # vertices_t = mesh_data_t["Vertices"]
         triangles_t = mesh_data_t["Triangles"]
         tmp_mesh_t = MeshContainer.from_db(vertices_t, triangles_t)
-        pv_mesh_t = meshcontainer_to_pv(tmp_mesh_t)
+        pv_mesh_t = meshcontainer_to_surface(tmp_mesh_t)
 
         mesh_data_tp1 = json.loads(row_tp1["result"])
         num_steps_tp1 = len(mesh_data_tp1["Steps"])
@@ -49,14 +49,14 @@ def process_series(args):
         # vertices_tp1 = mesh_data_tp1["Vertices"]
         triangles_tp1 = mesh_data_tp1["Triangles"]
         tmp_mesh_tp1 = MeshContainer.from_db(vertices_tp1, triangles_tp1)
-        pv_mesh_tp1 = meshcontainer_to_pv(tmp_mesh_tp1)
+        pv_mesh_tp1 = meshcontainer_to_surface(tmp_mesh_tp1)
         
         s_tp1 = np.sum(np.array(mesh_data_tp1["Steps"]))
         p_tp1 = json.loads(row_tp1["position"])
         r_tp1 = json.loads(row_tp1["rotation"])
         
-        pv_mesh_t.points = transform_points(np.array(pv_mesh_t.points), np.array(r_tp1), np.array(p_tp1))
-        pv_mesh_tp1.points = transform_points(np.array(pv_mesh_tp1.points), np.array(r_tp1), np.array(p_tp1))
+        pv_mesh_t.points = transform_points_np(np.array(pv_mesh_t.points), np.array(r_tp1), np.array(p_tp1))
+        pv_mesh_tp1.points = transform_points_np(np.array(pv_mesh_tp1.points), np.array(r_tp1), np.array(p_tp1))
         
         if mask_points:
 
@@ -72,17 +72,17 @@ def process_series(args):
         if total_points is not None:
             try:
 
-                coords_t, point_triangle_ids, bary_coords = barycentric_sampling(
+                coords_t, point_triangle_ids, bary_coords = barycentric_sampling_np(
                     pv_mesh_t, total_points, tri_mask=tri_mask, seed=seed
                 )
-                
+
                 tri_ids_list.append(point_triangle_ids)
                 bary_coords_list.append(bary_coords)
 
-                coords_tp1 = update_barycentric_points(pv_mesh_tp1, point_triangle_ids, bary_coords)
+                coords_tp1 = update_barycentric_points_np(pv_mesh_tp1, point_triangle_ids, bary_coords)
 
                 
-            except:
+            except AssertionError:
                 print(f"Skipping hit in series {series_id} - no press contact")
                 continue
         

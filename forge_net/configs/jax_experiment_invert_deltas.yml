@@ -2,15 +2,16 @@
 databases:
   db1: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/databases/noisy_cogging.db"
   db2: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/databases/random_hits.db"
-  lines: 20_000 #number of lines in database to read
+  lines: 50_000 #number of lines in database to read
 
 datasets:
-  points_per_state: 2048 #Default to the mesh vertices - don't sample (equiv to None in Python)
+  points_per_state: 512 #Default to the mesh vertices - don't sample (equiv to None in Python)
   mask_points: False #if uses masking to "focus" point cloud \near boundary condtion (plastic deformation domain)
   seed: ~
-  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/2048_unseeded_unmasked_data100k_tri_ids.npz" #user provided path where to save the data
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/512_unseeded_unmasked_data100k_tri_ids.npz" #user provided path where to save the data
 
 network:
+  arch: "small"
   model_type: "forgenet"
   batch_size: 512
   latent_size: 512
@@ -32,14 +33,14 @@ network:
   use_gpu: True
 
 run:
-  run_name: "jax_mse_2048_unmasked_unseeded"
+  run_name: "jax_small_mse_512_unmasked_unseeded"
   save_every: 50
   run_folder: ???
   # early stopping
   early_stop: False
   patience: 50
   min_delta: 1.0e-6
-  num_epochs: 250
+  num_epochs: 350
 
 eval:
   eval_idxs: [1, 25, 115]
