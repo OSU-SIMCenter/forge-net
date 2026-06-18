@@ -7,10 +7,14 @@ from forge_net.eval import evaluate, evaluate_series
 def main():
 
     base_path = get_project_root()
-    config_path = base_path / "configs" / "experiment_invert_deltas.yml"
+    config_path = base_path / "configs" / "training_config.yml"
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
     
+    config["databases"]["db1"] = str(base_path / "data" / "databases" / config["databases"]["db1"])
+    config["databases"]["db2"] = str(base_path / "data" / "databases" / config["databases"]["db2"])
+    config["datasets"]["data_out"] = str(base_path / "data" / "datasets" / config["datasets"]["data_out"])
+
     run_folder = base_path / "runs" / config["run"]["run_name"]
     assert not run_folder.exists(), print("Run already exists")
     config["run"]["run_folder"] = run_folder

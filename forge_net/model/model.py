@@ -156,18 +156,18 @@ class ForgeNet(nn.Module):
     def forward(self, x_t, a_t):
         B, C, N = x_t.shape
         
-        # 1. Encode Global Context
+        # Encode Global Context
         x_l = self.state_encoder(x_t)      # (B, latent_size)
         a_l = self.action_encoder(a_t)     # (B, latent_size)
         global_latent = torch.cat([x_l, a_l], dim=1) # (B, latent_size*2)
         
-        # 2. Expand Global Context to every point
+        # Expand Global Context to every point
         global_expanded = global_latent.unsqueeze(2).expand(-1, -1, N) # (B, latent_size*2, N)
         
-        # 3. Concatenate Global Context with Point Positions (Identity Skip)
-        # This tells the decoder WHERE each point is in space.
+        # Concatenate Global Context with Point Positions
+        # tells the decoder where each point is in space.
         combined_features = torch.cat([global_expanded, x_t], dim=1) # (B, latent_size*2 + 3, N)
         
-        # 4. Predict Point-wise Deltas
+        # Predict Point-wise Deltas
         delta = self.decoder(combined_features) 
         return delta

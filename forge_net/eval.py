@@ -3,9 +3,9 @@ import torch
 from forge_net.utils.common import *
 from forge_net.utils.math import *
 from forge_net.utils.plotting import * 
-from forge_net.invert_deltas import invert_deltas_to_mesh, save_comparison_turntable
-# from forge_net.loss.chamfer import chamfer_distance
-from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
+from forge_net.utils.invert_deltas import invert_deltas_to_mesh, save_comparison_turntable
+from forge_net.loss.chamfer import chamfer_distance
+# from pytorch3d.loss import chamfer_distance #original implementation uses a chamfer distance
 from tqdm import tqdm 
 
 def evaluate(config, trainer):
@@ -91,7 +91,7 @@ def evaluate(config, trainer):
 def evaluate_series(config, trainer, num_series, min_series_length, 
                     max_cols, plot_mode, n_step, add_mse, add_chamfer, add_hausdorff, save_meshes):
     '''
-    Docstring for evaluate_series
+    Evaluate a trained ForgeNet network over multiple series of hits recursively
     
     :param config: YAML config containing paths to data and network settings
     :param trainer: trainer class instance
@@ -122,6 +122,7 @@ def evaluate_series(config, trainer, num_series, min_series_length,
             return(trainer.net(x_t=x, a_t=a))
     
     series_lengths = data['series_lengths']
+    series_ids = data['series_ids']
     eval_series_idxs = [] 
     for idx, sl in enumerate(series_lengths):
         if sl >= min_series_length:
@@ -152,12 +153,13 @@ def evaluate_series(config, trainer, num_series, min_series_length,
         series_end_idx = series_start_idx + series_length - 1 if series_length <= min_series_length else series_start_idx + min_series_length - 1
         truncated_length = series_end_idx - series_start_idx
         last_frame_idx = series_end_idx - 1
-        # series_id = series_ids[eval_series_idx]
-        # print(f"Evaluating series {eval_series_idx} out of {len(series_lengths)} with \n \
-        #         Series length: {series_length}  \
-        #         Starting index: {series_start_idx} \
-        #         End index: {series_end_idx} \
-        #         Trunacted length: {truncated_length}" )
+
+        print(f"Evaluating series {eval_series_idx} out of {len(series_lengths)} with \n \
+                Series length: {series_length}  \
+                Starting index: {series_start_idx} \
+                End index: {series_end_idx} \
+                Truncated length: {truncated_length}" )
+
         
         counter = 0
         previous_deltas = None
@@ -313,15 +315,18 @@ def evaluate_series(config, trainer, num_series, min_series_length,
         all_stats_dict['all_rec_step_hausdorffs'].append(series_stats_dict['rec_step_hausdorffs'])
 
     
-    # plot_eval_series(all_stats_dict,
-    #                   mode=plot_mode,
-    #                   max_cols=max_cols,
-    #                   n_step=n_step,
-    #                   fill_variation=True,
-    #                   add_mse=add_mse,
-    #                   add_chamfer=add_chamfer,
-    #                   add_hausdorff=add_hausdorff,
-    #                   fig_path=eval_path/"eval_series.png")
+    plot_eval_series(all_stats_dict,
+                      mode=plot_mode,
+                      max_cols=max_cols,
+                      n_step=n_step,
+                      fill_variation=True,
+                      add_mse=add_mse,
+                      add_chamfer=add_chamfer,
+                      add_hausdorff=add_hausdorff,
+                      fig_path=eval_path/"eval_series.png")
+                      
+    print(f"Saving output to {eval_path}")
+
     return all_stats_dict
     
 def eval_time(config, trainer):
@@ -406,8 +411,6 @@ def render_series(config, trainer, num_series=5, min_series_length=50, render_mo
         
         x_recursive = torch.tensor(states[series_start_idx], dtype=torch.float32).T.unsqueeze(0).to(trainer.device)
         
-        # mesh_data = data['meshes'][0]
-        # base_faces = np.array(mesh_data['faces'])
         
         if render_mode == "mesh":
             base_mesh = pv.PolyData(mesh_data['points'], base_faces)
@@ -422,23 +425,6 @@ def render_series(config, trainer, num_series=5, min_series_length=50, render_mo
             
             x_recursive = x_recursive + delta_recursive.transpose(1, 2) / 100
             x_rec_np = x_recursive.squeeze().cpu().numpy().T
-            
-            # gt_mesh_data = data['meshes_tp1'][idx]
-            # gt_pts = np.array(gt_mesh_data['points'])
-
-            # # if render_mode == "mesh":
-            # #     tri_ids = data['tri_ids'][idx]
-            # #     bary_coords = data['bary_coords'][idx]
-            # #     recovered_mesh, current_deltas = invert_deltas_to_mesh(
-            # #         base_mesh, x_rec_np, tri_ids, bary_coords, alpha=0.05, initial_guess=previous_deltas
-            # #     )
-            # #     previous_deltas = current_deltas
-                
-            # #     pred_data.append({'points': np.array(recovered_mesh.points), 'faces': np.array(recovered_mesh.faces)})
-            # #     gt_data.append({'points': gt_pts, 'faces': base_faces})
-            # # else:
-            # #     # Point cloud mode: skip mesh reconstruction entirely!
-
             
             if idx + 1 < series_end_idx:
                 x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
@@ -472,11 +458,11 @@ if __name__ == "__main__":
 
     trainer.load(model_path = output_folder / "best_model.pth")
     trainer.net.eval()
-    # evaluate(config, trainer)
+    evaluate(config, trainer)
     evaluate_series(config, trainer,
                     add_mse=False,
                     add_chamfer=False, 
-                    add_hausdorff=True,
+                    add_hausdorff=False,
                     plot_mode='dist',
                     num_series=1, min_series_length=60, 
                     n_step=1, max_cols=7, save_meshes=True)

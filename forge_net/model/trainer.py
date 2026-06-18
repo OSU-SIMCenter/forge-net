@@ -97,13 +97,6 @@ class ForgeNetTrainer:
             lr=self.config["network"]["optimizer"]["base_learning_rate"],
             weight_decay=self.config["network"]["optimizer"]["weight_decay"]
         )
-
-        # #TODO decide on final scheduler configuration
-        # self.scheduler = optim.lr_scheduler.LinearLR(self.optimizer, 
-        #                                              start_factor=1.0, 
-        #                                              end_factor=0.05, 
-        #                                              total_iters=40)
-    
         warmup_epochs = 20
         from torch.optim.lr_scheduler import CosineAnnealingLR, SequentialLR, LambdaLR, LinearLR
         warmup = LambdaLR(self.optimizer, lambda e: (e + 1) / warmup_epochs)

@@ -13,7 +13,7 @@ class ChamferResult:
     disps_x_to_y:  Optional[torch.Tensor] = None  # (B, N, D) per-point displacements
     disps_y_to_x:  Optional[torch.Tensor] = None
 
-#PyTorch3d Cahmfer distance implementation converted by Claude Sonnet 4.6
+#PyTorch3d Chamfer distance implementation converted by Claude Sonnet 4.6
 def knn_points_simple(
     p1: torch.Tensor,
     p2: torch.Tensor,

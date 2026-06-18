@@ -1,6 +1,7 @@
 runs
 model/output_cogging
 figures
+forge_net/notebooks
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

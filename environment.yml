@@ -1,0 +1,22 @@
+name: forgenet
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - libstdcxx-ng
+  - numpy
+  - scipy
+  - matplotlib
+  - pandas
+  - tqdm
+  - pyyaml
+  - pillow
+  - tensorboard
+  - pyvista==0.44.2
+  - ipykernel
+  - ipywidgets
+  - pip
+  - pip:
+    - torch
+    - open3d
