@@ -1,10 +1,15 @@
+from pathlib import Path
 import sqlite3
 import pandas as pd
 import numpy as np
 import json
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
-from forge_net.utils.utils import *
+
+from forge_net.data.dataloaders import GetSingleStepDataLoaders
+from forge_net.utils.common import actions_from_feature_map
+from forge_net.utils.common import MeshContainer, meshcontainer_to_pv
+from forge_net.utils.math import *
 
 def process_series(args):
     """Process a single series - this will run in parallel
@@ -20,6 +25,8 @@ def process_series(args):
     series_rotations = []
     pv_meshes = []
     pv_meshes_tp1 = []
+    bary_coords_list = []
+    tri_ids_list = []
     
     for i in range(len(group_df) - 1):
         row_t = group_df.iloc[i]
@@ -66,10 +73,14 @@ def process_series(args):
             try:
 
                 coords_t, point_triangle_ids, bary_coords = barycentric_sampling(
-                    pv_mesh_t, total_points, tri_mask=tri_mask
+                    pv_mesh_t, total_points, tri_mask=tri_mask, seed=seed
                 )
                 
+                tri_ids_list.append(point_triangle_ids)
+                bary_coords_list.append(bary_coords)
+
                 coords_tp1 = update_barycentric_points(pv_mesh_tp1, point_triangle_ids, bary_coords)
+
                 
             except:
                 print(f"Skipping hit in series {series_id} - no press contact")
@@ -103,17 +114,27 @@ def process_series(args):
         series_steps.append(s_tp1)
         series_positions.append(p_tp1)
         series_rotations.append(r_tp1)
-        pv_meshes.append(pv_mesh_t)
-        pv_meshes_tp1.append(pv_mesh_tp1)
+        #pv_meshes to enable pickling later with npz
+        pv_meshes.append({
+            'points': pv_mesh_t.points,
+            'faces': pv_mesh_t.faces
+        })
+        pv_meshes_tp1.append({
+            'points': pv_mesh_tp1.points,
+            'faces': pv_mesh_tp1.faces
+        })
+        
     
     result = {
-        'series_id': series_id,
         'coords_t': series_coords_t,
         'coords_tp1': series_coords_tp1,
+        'tri_ids': tri_ids_list,
+        'bary_coords': bary_coords_list,
         'steps': series_steps,
         'positions': series_positions,
         'rotations': series_rotations,
         'length': len(series_coords_t),
+        'series_id': series_id,
         'meshes': pv_meshes,
         'meshes_tp1' : pv_meshes_tp1
     }
@@ -171,6 +192,8 @@ def n_extract_data(db_path, total_points, lines, n_workers=None, mask_points=Non
     output = {
         'coords_t': [],
         'coords_tp1': [],
+        'tri_ids': [],
+        'bary_coords': [],
         'steps': [],
         'positions': [],
         'rotations': [],
@@ -185,6 +208,8 @@ def n_extract_data(db_path, total_points, lines, n_workers=None, mask_points=Non
         if result['length'] > 0:  # Only add series that produced data
             output['coords_t'].extend(result['coords_t'])
             output['coords_tp1'].extend(result['coords_tp1'])
+            output['tri_ids'].extend(result['tri_ids'])
+            output['bary_coords'].extend(result['bary_coords'])
             output['steps'].extend(result['steps'])
             output['positions'].extend(result['positions'])
             output['rotations'].extend(result['rotations'])
@@ -193,12 +218,54 @@ def n_extract_data(db_path, total_points, lines, n_workers=None, mask_points=Non
             output['meshes'].extend(result['meshes'])
             output['meshes_tp1'].extend(result['meshes_tp1'])
 
+
+    for key, value in output.items():
+        if key in ['meshes', 'meshes_tp1']:
+            arr = np.array(value, dtype=object)
+        else:
+            arr = np.array(value)
+            if key in ['steps']:
+                arr = arr.reshape(-1,1)
             
-    # Convert to numpy arrays
-    output['coords_t'] = np.array(output['coords_t'])
-    output['coords_tp1'] = np.array(output['coords_tp1'])
-    output['steps'] = np.array(output['steps']).reshape(-1, 1)
-    output['positions'] = np.array(output['positions'])
-    output['rotations'] = np.array(output['rotations'])
+        output[key] = arr
     
     return output
+
+def make_dataset(config):
+    '''
+    Processes a SQLite database into a numpy npz which is compatible with pytorch dataloaders
+    '''
+    total_points, mask_points, seed, data_out = config['datasets'].values()
+
+    if Path(data_out).exists():
+        print("Datasets already exists skipping creation")
+        return
+    
+    db_path1, db_path2, lines = config['databases'].values()
+    print(db_path1, db_path2)
+    assert Path(db_path1).exists() and Path(db_path2).exists(), "Provided database paths do not exist check paths"
+    
+    data1 = n_extract_data(db_path1, total_points, lines, seed=seed, mask_points=mask_points, n_workers=128)
+    data2 = n_extract_data(db_path2, total_points, lines, seed=seed,  mask_points=mask_points, n_workers=128)
+    data = {key: np.concatenate((data1[key], data2[key]), axis=0) for key in data1.keys()}
+
+    np.savez(data_out, **data)
+
+def make_dataloaders(config):
+    data_path = config["datasets"]["data_out"]
+    data = np.load(data_path)
+    c_t = data['coords_t']
+    c_tp1 = data['coords_tp1']
+    
+    action_features = config["network"]["action_features"]
+    # Build only what's in the config
+    actions = actions_from_feature_map(action_features, data)
+ 
+    train_loader, test_loader = GetSingleStepDataLoaders(
+        coords_t=c_t,       
+        coords_tp1=c_tp1,
+        actions=actions,
+        batch_size=config["network"]["batch_size"]
+        )
+    
+    return(train_loader, test_loader)

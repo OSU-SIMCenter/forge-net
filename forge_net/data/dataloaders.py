@@ -1,7 +1,6 @@
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 
-
 class SingleStepMeshTransitionDataset(Dataset):
     def __init__(self, coords_t, coords_tp1, actions, delta_scalar=100):
         """

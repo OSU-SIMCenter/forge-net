@@ -1,14 +1,14 @@
 # Train with the full mesh and "full" action space (steps, pos_x, rot_x)
-databases:
-  db1: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/databases/noisy_cogging.db"
-  db2: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/databases/random_hits.db"
-  lines: 100_000 #number of lines in database to read
+databases: #database names to process - expected in data/databases folder
+  db1: "noisy_cogging.db" 
+  db2: "random_hits.db"
+  lines: 20_000 #number of lines in database to read
 
 datasets:
-  points_per_state: 1024 #Default to the mesh vertices - don't sample (equiv to None in Python)
+  points_per_state: 2048 #Default to the mesh vertices - don't sample (equiv to None in Python)
   mask_points: False #if uses masking to "focus" point cloud \near boundary condtion (plastic deformation domain)
   seed: ~
-  data_out: "/local/scratch/groves/jax-forgeRL/models/forging_autoencoder/data/datasets/noseed_unmasked_data100k.npz" #user provided path where to save the data
+  data_out: "2048_unseeded_unmasked_data100k_tri_ids.npz" #name of output data (saved in data/datasets folder)
 
 network:
   model_type: "forgenet"
@@ -32,14 +32,14 @@ network:
   use_gpu: True
 
 run:
-  run_name: "mse_1024_unmasked_nores"
+  run_name: "test"
   save_every: 50
   run_folder: ???
   # early stopping
   early_stop: False
   patience: 50
   min_delta: 1.0e-6
-  num_epochs: 200
+  num_epochs: 2200
 
 eval:
   eval_idxs: [1, 25, 115]
