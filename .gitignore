@@ -217,3 +217,5 @@ __marimo__/
 # Large file types
 *.npz
 *.db
+forge_net/data/datasets/agf_data/20260608_151857_target3.mcap
+*.mcap
