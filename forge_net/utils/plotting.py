@@ -2,8 +2,8 @@ from forge_net.utils.common import get_tool_mesh
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import pyvista as pv
-pv.start_xvfb()
-pv.set_jupyter_backend('static')
+# pv.start_xvfb()
+# pv.set_jupyter_backend('static')
 import numpy as np
 import os
 import shutil
@@ -901,14 +901,15 @@ def create_deformation_gif_parallel(pred_data: List[Dict[str, np.ndarray]],
     os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
     total_frames = len(pred_data)
     
-    # Calculate global bounds to anchor cameras
+    # Calculate global bounds from pred_data only so the camera stays focused
+    # on the subject being evolved; gt_data can have a different extent (e.g. an
+    # elongated goal mesh) which would otherwise shift/zoom-out the camera.
     all_points = [d['points'] for d in pred_data]
-    if gt_data:
-        all_points.extend([d['points'] for d in gt_data])
     
+    all_presses = []
     if show_presses:
         assert actions is not None
-        
+
         translations = [a['translation'] for a in actions]
         rotations = [r['rotation'] for r in actions]
 
@@ -933,17 +934,25 @@ def create_deformation_gif_parallel(pred_data: List[Dict[str, np.ndarray]],
         frame_data.append((idx, current_pred, current_ref, current_press, global_center, camera_distance, total_frames))
     
     temp_frame_paths = []
-    
-    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-        future_to_idx = {executor.submit(render_deformation_frame, data): data[0] for data in frame_data}
-        
-        for future in concurrent.futures.as_completed(future_to_idx):
-            idx = future_to_idx[future]
+
+    if max_workers == 1:
+        for data in frame_data:
             try:
-                frame_idx, temp_path = future.result()
+                frame_idx, temp_path = render_deformation_frame(data)
                 temp_frame_paths.append((frame_idx, temp_path))
             except Exception as exc:
-                print(f"Frame {idx} generated an exception: {exc}")
+                print(f"Frame {data[0]} generated an exception: {exc}")
+    else:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx = {executor.submit(render_deformation_frame, data): data[0] for data in frame_data}
+
+            for future in concurrent.futures.as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    frame_idx, temp_path = future.result()
+                    temp_frame_paths.append((frame_idx, temp_path))
+                except Exception as exc:
+                    print(f"Frame {idx} generated an exception: {exc}")
     
     temp_frame_paths.sort()
     
