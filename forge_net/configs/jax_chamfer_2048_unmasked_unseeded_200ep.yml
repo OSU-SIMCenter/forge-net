@@ -1,0 +1,56 @@
+# Chamfer-loss counterpart to jax_mse_2048_unmasked_unseeded_200ep, for
+# strain-ablation comparison plots (see strain_ablation.py). Same dataset,
+# same architecture (arch=large, use_res=False) -- loss is the only change.
+# 200-epoch retrain of jax_chamfer_2048_unmasked_unseeded (that run only has
+# a checkpoint at step 6, so this is a fresh full run under a new run_name).
+databases:
+  db1: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/databases/noisy_cogging.db"
+  db2: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/databases/random_hits.db"
+  lines: 20_000
+
+datasets:
+  points_per_state: 2048
+  mask_points: False
+  seed: ~
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/2048_unseeded_unmasked_data100k_tri_ids.npz"
+
+network:
+  model_type: "forgenet"
+  # Chamfer distance is O(P^2) in memory (full 2048x2048 pairwise distance
+  # matrix per sample) vs. MSE's O(P) elementwise cost -- batch_size 512
+  # (fine for the mse counterpart run) OOMs the 49GB GPU here. 128 is
+  # validated to fit with headroom (tested up to 384 in isolation).
+  batch_size: 128
+  latent_size: 512
+  action_features: ["steps"]
+  action_dims: 1
+  gradient_clip: 1.0
+  use_res: False
+  loss: "chamfer"
+  optimizer:
+    base_learning_rate: 1.0e-4
+    min_learning_rate: 1.0e-7
+    weight_decay: 1.0e-2
+  scheduler:
+    start_factor: 1.0
+    end_factor: 0.05
+    lr_decay_rate: 1.0e-3
+    lr_decay_step: 1.0
+  dropout: 0.1
+  use_gpu: True
+
+run:
+  run_name: "jax_chamfer_2048_unmasked_unseeded_200ep"
+  save_every: 50
+  run_folder: ???
+  early_stop: False
+  # trainer.py's on_epoch_end unconditionally flips self.early_stop = True once
+  # `patience` epochs pass without a min_delta improvement, regardless of the
+  # early_stop flag above -- so patience must be >= num_epochs to guarantee a
+  # full run.
+  patience: 200
+  min_delta: 1.0e-6
+  num_epochs: 200
+
+eval:
+  eval_idxs: [1, 25, 115]

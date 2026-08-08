@@ -13,11 +13,11 @@ from forge_net.utils.math import *
 
 def process_series(args):
     """Process a single series - this will run in parallel
-    
+
     Args:
-        args: Tuple of (series_id, group_df, total_points, press_width, mask_points, seed)
+        args: Tuple of (series_id, group_df, total_points, press_width, mask_points, seed, canonical_frame)
     """
-    series_id, group_df, total_points, press_width, mask_points, seed = args
+    series_id, group_df, total_points, press_width, mask_points, seed, canonical_frame = args
     series_coords_t = []
     series_coords_tp1 = []
     series_steps = []
@@ -55,14 +55,32 @@ def process_series(args):
         p_tp1 = json.loads(row_tp1["position"])
         r_tp1 = json.loads(row_tp1["rotation"])
         
-        pv_mesh_t.points = transform_points_np(np.array(pv_mesh_t.points), np.array(r_tp1), np.array(p_tp1))
-        pv_mesh_tp1.points = transform_points_np(np.array(pv_mesh_tp1.points), np.array(r_tp1), np.array(p_tp1))
-        
+        # `canonical_frame=True` (default, matches this function's ORIGINAL
+        # unconditional behavior): both meshes are transformed into the
+        # applied action's own pose, so the network only ever needs to see
+        # a (near-)fixed boundary-condition location -- `positions`/
+        # `rotations` are still recorded in the output, but become close to
+        # redundant with the (canonicalized) geometry itself.
+        # `canonical_frame=False`: meshes stay in world/native frame, and
+        # the FULL `(steps, positions, rotations)` action is the only signal
+        # telling the network WHERE the boundary condition acted -- needed
+        # for a downstream use that requires differentiating a prediction
+        # w.r.t. all three action components (not just depth), since a
+        # canonicalizing transform makes position/rotation implicit in the
+        # (already-transformed) input geometry rather than an explicit,
+        # independently-differentiable input.
+        if canonical_frame:
+            pv_mesh_t.points = transform_points_np(np.array(pv_mesh_t.points), np.array(r_tp1), np.array(p_tp1))
+            pv_mesh_tp1.points = transform_points_np(np.array(pv_mesh_tp1.points), np.array(r_tp1), np.array(p_tp1))
+            mask_center = 0.0
+        else:
+            mask_center = float(np.array(p_tp1)[0])
+
         if mask_points:
 
             tri_mask, _ = triangle_mask_from_window(
-                    pv_mesh_t, center = 0.0, 
-                    window_length=press_width, 
+                    pv_mesh_t, center = mask_center,
+                    window_length=press_width,
                     bc_length=3.0*press_width
                 )
         else:
@@ -141,7 +159,7 @@ def process_series(args):
     
     return result
 
-def n_extract_data(db_path, total_points, lines, n_workers=None, mask_points=None, seed=None):
+def n_extract_data(db_path, total_points, lines, n_workers=None, mask_points=None, seed=None, canonical_frame=True):
     """
     Extract data with parallel processing
     Args:
@@ -151,6 +169,7 @@ def n_extract_data(db_path, total_points, lines, n_workers=None, mask_points=Non
         n_workers: Number of parallel workers (None = use all CPUs)
         mask_points: If True use domain decomposition mask
         seed: if passed do deterministic sampling
+        canonical_frame: see process_series's docstring
     """
     # Read data from database
     conn = sqlite3.connect(db_path)
@@ -161,12 +180,13 @@ def n_extract_data(db_path, total_points, lines, n_workers=None, mask_points=Non
     press_width = 1.0
     series_ids = df['series_id'].unique()
     args_list = [
-        (series_id, 
-         df[df['series_id'] == series_id].reset_index(drop=True), 
-         total_points, 
+        (series_id,
+         df[df['series_id'] == series_id].reset_index(drop=True),
+         total_points,
          press_width,
          mask_points,
-         seed
+         seed,
+         canonical_frame,
         )
         for series_id in series_ids
     ]
@@ -235,18 +255,30 @@ def make_dataset(config):
     '''
     Processes a SQLite database into a numpy npz which is compatible with pytorch dataloaders
     '''
-    total_points, mask_points, seed, data_out = config['datasets'].values()
+    # Explicit keys, not positional `.values()` unpacking: `canonical_frame`
+    # is a new, OPTIONAL key (`.get(..., True)` preserves this function's
+    # original always-canonicalize behavior for any config that predates it)
+    # -- positional unpacking would silently misassign or hard-fail as soon
+    # as the dict didn't have exactly the old 4 keys in the old order.
+    datasets_cfg = config['datasets']
+    total_points = datasets_cfg['points_per_state']
+    mask_points = datasets_cfg['mask_points']
+    seed = datasets_cfg.get('seed')  # optional -- not present in every existing config (e.g. experimentB.yml)
+    data_out = datasets_cfg['data_out']
+    canonical_frame = datasets_cfg.get('canonical_frame', True)
 
     if Path(data_out).exists():
         print("Datasets already exists skipping creation")
         return
-    
+
     db_path1, db_path2, lines = config['databases'].values()
     print(db_path1, db_path2)
     assert Path(db_path1).exists() and Path(db_path2).exists(), "Provided database paths do not exist check paths"
-    
-    data1 = n_extract_data(db_path1, total_points, lines, seed=seed, mask_points=mask_points, n_workers=128)
-    data2 = n_extract_data(db_path2, total_points, lines, seed=seed,  mask_points=mask_points, n_workers=128)
+
+    data1 = n_extract_data(db_path1, total_points, lines, seed=seed, mask_points=mask_points, n_workers=128,
+                            canonical_frame=canonical_frame)
+    data2 = n_extract_data(db_path2, total_points, lines, seed=seed, mask_points=mask_points, n_workers=128,
+                            canonical_frame=canonical_frame)
     data = {key: np.concatenate((data1[key], data2[key]), axis=0) for key in data1.keys()}
 
     np.savez(data_out, **data)

@@ -2,6 +2,7 @@ import yaml, argparse
 from pathlib import Path
 from forge_net.data.process_data import make_dataloaders, make_dataset
 # from forge_net.data.process_data_fanglei import make_dataloaders, make_dataset
+# from forge_net.data.process_data_forge_common import make_dataloaders, make_dataset  # forge_common.db (configs/forge_common_v1.yml)
 
 from forge_net.utils.common import get_project_root
 from forge_net.model.trainer import ForgeNetTrainer
@@ -38,10 +39,19 @@ def main():
     with open(run_folder / "config_out.yml", "w") as file:
         yaml.safe_dump(config, file)
     evaluate(config, trainer)
+    # `min_series_length` default (35) assumes long training series; a
+    # dataset built from short, deep-strike series (see forge_genie/scripts/
+    # generate_forgenet_slab_dataset.py's deep-strike v2) never reaches that
+    # length, which previously crashed here (`plot_eval_series` indexing an
+    # empty stats list) rather than just finding zero eligible series.
+    # `config["eval"]["min_series_length"]` lets a config opt into a lower
+    # threshold; default preserves prior behavior exactly for existing configs.
+    min_series_length = config.get("eval", {}).get("min_series_length", 35)
     evaluate_series(config, trainer,
-                    add_chamfer=True, add_hausdorff=False,
+                    add_mse=True, add_chamfer=True, add_hausdorff=False,
+                    plot_heatmaps=True,
                     plot_mode='dist',
-                    num_series=1, min_series_length=35, 
+                    num_series=1, min_series_length=min_series_length,
                     n_step=15, max_cols=7, save_meshes=False)
 
 if __name__ == "__main__":

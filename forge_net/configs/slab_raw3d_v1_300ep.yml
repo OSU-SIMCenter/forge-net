@@ -1,0 +1,51 @@
+databases:
+  db1: "unused_data_out_already_exists"
+  db2: "unused_data_out_already_exists"
+  lines: 1
+
+datasets:
+  points_per_state: 512 # matches forge_genie/scripts/generate_forgenet_slab_dataset.py's N_POINTS_PER_STATE
+  mask_points: false
+  seed: 42
+  canonical_frame: false # raw/world-frame coords + full (steps,positions,rotations) action --
+    # needed to differentiate w.r.t. all three action components, not just depth -- see
+    # data/process_data.py::process_series's docstring for the tradeoff
+  data_out: "/local/scratch/groves/forge-genie/forge-net/forge_net/data/datasets/slab_generated/slab_dataset.npz"
+
+network:
+  arch: "small" # forge_net.model.small_model.ForgeNet (~134K params)
+  loss: "mse" # dataset uses barycentric-correspondence-preserving sampling (same tri_id/bary coords
+    # at t and t+1), so per-point MSE on the predicted delta is well-posed -- chamfer is for
+    # non-corresponding point sets, not needed/wanted here
+  batch_size: 512
+  latent_size: 512
+  action_features: ["steps", "positions", "rotations"]
+  action_dims: 3 # steps: 1, positions: 1 (x-only, per actions_from_feature_map), rotations: 1 (about x) --
+    # matches experimentB.yml's own action_dims for the same action_features; slab's own action is
+    # naturally exactly these 3 independent scalars (z, phi, depth), the other position/rotation
+    # components actions_from_feature_map would extract are always 0 in this dataset by construction
+  gradient_clip: 1.0
+  optimizer:
+    base_learning_rate: 5.0e-4
+    min_learning_rate: 1.0e-5
+    weight_decay: 1.0e-2
+  dropout: 0.1
+  use_gpu: true
+
+run:
+  # 50-epoch run (slab_raw3d_v1) was still descending steeply at the end
+  # (best test loss 1865.7 at epoch 49, no plateau) -- 1.7s/epoch makes a
+  # much longer run cheap (~8.5min for 300 epochs), and trainer.py's
+  # warmup_epochs=20 is hardcoded, so a longer run also gives the LR
+  # schedule far more post-warmup decay time (280 vs. 30 epochs) instead of
+  # spending over half the run still ramping up.
+  run_name: "slab_raw3d_v1_300ep"
+  save_every: 10
+  run_folder: ???
+  early_stop: False
+  patience: 250
+  min_delta: 1.0e-6
+  num_epochs: 300
+
+eval:
+  eval_idxs: [1, 25, 115]

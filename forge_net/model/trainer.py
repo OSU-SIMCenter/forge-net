@@ -9,6 +9,8 @@ import orbax.checkpoint as ocp
 # from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
+from forge_net.loss.chamfer_jax import chamfer_distance_jax
+
 _ARCH_MODULES = {
     "large": "forge_net.model.model",
     "small": "forge_net.model.small_model",
@@ -115,8 +117,17 @@ class ForgeNetTrainer:
         print(f"Total trainable parameters: {total_params:,}")
 
         # 4. Optax Scheduler & Optimizer
-        # Estimate steps per epoch (assuming dataloader returns total length)
-        steps_per_epoch = 1000 # FALLBACK: Replace this with len(self.train_loader()) if your wrapper supports len()
+        # `self.train_loader` wraps a torch DataLoader in a generator
+        # (`jax_dataloader_wrapper`), which has no len() -- count real
+        # batches/epoch by fully consuming one pass (cheap, done once here;
+        # each call to `self.train_loader()` starts a fresh iterator, so
+        # this doesn't disturb the actual training loop's own iteration).
+        # A hardcoded steps_per_epoch=1000 fallback used to sit here -- for
+        # a small dataset (our ~22 steps/epoch, say) that made the LR
+        # warmup schedule below (`warmup_epochs * steps_per_epoch` steps)
+        # 40x longer than the entire training run, so the learning rate
+        # never left its near-zero warmup ramp.
+        steps_per_epoch = sum(1 for _ in self.train_loader())
         
         warmup_epochs = 20
         warmup_steps = warmup_epochs * steps_per_epoch
@@ -357,10 +368,14 @@ class ForgeNetTrainer:
             return lambda delta_pred, delta_gt: jnp.mean((delta_pred - delta_gt) ** 2)
         
         elif self.config["network"]["loss"] == "chamfer":
-            # WARNING: PyTorch3D cannot run inside JAX. 
-            print("CRITICAL: You must rewrite Chamfer distance in JAX. Using MSE as fallback.")
-            # return custom_jax_chamfer_distance
-            return lambda delta_pred, delta_gt: jnp.mean((delta_pred - delta_gt) ** 2)
+            print("Using JAX-native Chamfer distance loss function")
+            # Same convention as eval.py: chamfer between the predicted and
+            # ground-truth per-point delta fields directly (not on absolute
+            # x_t + delta coordinates), so points can be nearest-neighbor
+            # matched rather than compared strictly by tri_id correspondence.
+            return lambda delta_pred, delta_gt: chamfer_distance_jax(
+                delta_pred, delta_gt, point_reduction="mean", batch_reduction="mean",
+            ).loss
             
         elif self.config["network"]["loss"] == "wsd": 
             # WARNING: Custom PyTorch loss cannot run inside JAX.

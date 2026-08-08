@@ -60,16 +60,13 @@ def evaluate(config, trainer):
             loss_cont = np.sum((delta_hat_np - delta_gt_np)**2, axis=1).squeeze()
         
         elif config["network"]["loss"] in ["chamfer", "wsd"]:
-            # Wrap NumPy back to Torch strictly for the PyTorch3D Chamfer function
-            d_gt_torch = torch.from_numpy(delta_gt_np).unsqueeze(0).float()
-            d_hat_torch = torch.from_numpy(delta_hat_np).unsqueeze(0).float()
-            
-            # Using your existing PyTorch3D import
-            loss_cont = chamfer_distance(d_gt_torch, 
-                                         d_hat_torch, 
-                                         point_reduction=None, 
-                                         batch_reduction=None)[0][0]
-            loss_cont = loss_cont.cpu().numpy()
+            d_gt_jax = jnp.array(delta_gt_np)[jnp.newaxis, ...]
+            d_hat_jax = jnp.array(delta_hat_np)[jnp.newaxis, ...]
+
+            loss_cont = chamfer_distance_jax(d_gt_jax, d_hat_jax,
+                                              point_reduction=None,
+                                              batch_reduction=None).loss[0]
+            loss_cont = np.array(loss_cont).squeeze()
         
         else:
             raise ValueError("Loss function not supported for evaluation")
@@ -104,10 +101,21 @@ def evaluate(config, trainer):
 
         print(f"Saved figures in {idx_path}")
 
-def evaluate_series(config, trainer, num_series, min_series_length, 
-                    max_cols, plot_mode, n_step, add_mse, add_chamfer, 
+def evaluate_series(config, trainer, num_series, min_series_length,
+                    max_cols, plot_mode, n_step, add_mse, add_chamfer,
                     add_hausdorff, plot_heatmaps, save_meshes):
-    
+    # `process_series` (see data/process_data.py) canonicalizes BOTH coords_t
+    # AND coords_tp1 for row i via `transform_points(points, rotations[i],
+    # positions[i])` -- but ONLY when `canonical_frame=True`. When
+    # `canonical_frame=False` (our world-frame slab datasets), `coords_t`/
+    # `coords_tp1` are stored in raw world frame directly and
+    # `positions`/`rotations` are just action-feature VALUES, not a
+    # canonicalizing pose -- so the untransform/transform frame-hop below
+    # (needed to move the recursive rollout state from hit i's local frame
+    # into hit i+1's local frame) must be skipped entirely, or it corrupts
+    # the rollout with a spurious rigid-body shift every single hit.
+    canonical_frame = config["datasets"].get("canonical_frame", True)
+
     data_path = config["datasets"]["data_out"]
     assert os.path.exists(data_path), "Dataset found"
     data = np.load(data_path, allow_pickle=True)
@@ -205,18 +213,22 @@ def evaluate_series(config, trainer, num_series, min_series_length,
 
             # 5. Complex Metrics (Chamfer/Hausdorff)
             if add_chamfer:
-                # Local Torch wrap for Chamfer
-                rec_torch = torch.from_numpy(x_rec_np).unsqueeze(0).float()
-                gt_torch = torch.from_numpy(x_tp1_gt_np).unsqueeze(0).float()
-                series_stats_dict['rec_step_chamfers'].append(chamfer_distance(rec_torch, gt_torch)[0].item())
+                rec_jax = jnp.array(x_rec_np)[jnp.newaxis, ...]
+                gt_jax = jnp.array(x_tp1_gt_np)[jnp.newaxis, ...]
+                series_stats_dict['rec_step_chamfers'].append(
+                    float(chamfer_distance_jax(rec_jax, gt_jax).loss))
 
                 # Chamfer to Last Frame Goal
-                x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
-                x_rec_in_last = transform_points(x_rec_world, rotations[last_frame_idx], positions[last_frame_idx])
-                
-                rec_last_torch = torch.from_numpy(x_rec_in_last).unsqueeze(0).float()
-                last_gt_torch = torch.from_numpy(states_tp1[last_frame_idx]).unsqueeze(0).float()
-                series_stats_dict['rec_step_chamfer_to_last'].append(chamfer_distance(rec_last_torch, last_gt_torch)[0].item())
+                if canonical_frame:
+                    x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
+                    x_rec_in_last = transform_points(x_rec_world, rotations[last_frame_idx], positions[last_frame_idx])
+                else:
+                    x_rec_in_last = x_rec_np  # already world frame -- no frame-hop needed
+
+                rec_last_jax = jnp.array(x_rec_in_last)[jnp.newaxis, ...]
+                last_gt_jax = jnp.array(states_tp1[last_frame_idx])[jnp.newaxis, ...]
+                series_stats_dict['rec_step_chamfer_to_last'].append(
+                    float(chamfer_distance_jax(rec_last_jax, last_gt_jax).loss))
 
             if add_hausdorff:
                 # Mesh logic uses standard NumPy/PyVista workflow
@@ -237,8 +249,11 @@ def evaluate_series(config, trainer, num_series, min_series_length,
 
             # 6. Recursive Reference Frame Update (The "Loop")
             if idx + 1 < series_end_idx:
-                x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
-                x_rec_transformed = transform_points(x_rec_world, rotations[idx + 1], positions[idx + 1])
+                if canonical_frame:
+                    x_rec_world = untransform_points(x_rec_np, rotations[idx], positions[idx])
+                    x_rec_transformed = transform_points(x_rec_world, rotations[idx + 1], positions[idx + 1])
+                else:
+                    x_rec_transformed = x_rec_np  # already world frame -- no frame-hop needed
                 x_recursive_jax = jnp.array(x_rec_transformed)[jnp.newaxis, ...]
 
             counter += 1

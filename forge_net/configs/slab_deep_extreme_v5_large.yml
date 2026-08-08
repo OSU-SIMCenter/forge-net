@@ -1,0 +1,46 @@
+databases:
+  db1: "unused_data_out_already_exists"
+  db2: "unused_data_out_already_exists"
+  lines: 1
+
+datasets:
+  points_per_state: 2048
+  mask_points: false
+  seed: 42
+  canonical_frame: false
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_extreme_v5/slab_dataset.npz"
+
+network:
+  arch: "large" # user's direct visual finding on the v5_small checkpoint: rollouts look "too soft"/"too
+    # rounded" -- residual capacity may matter more for HIT SHARPNESS than the earlier single-step-loss
+    # comparison (1.229 vs 1.423, "modest gap") captured. Same 60k v5 dataset as v5_small, otherwise
+    # identical hyperparams, so this isolates arch as the only variable.
+  use_res: true # required key for arch=="large" (trainer.py reads it via direct dict access, not .get)
+  loss: "mse"
+  batch_size: 256
+  latent_size: 512
+  action_features: ["steps", "positions", "rotations_norm"]
+  action_dims: 3
+  gradient_clip: 1.0
+  optimizer:
+    base_learning_rate: 5.0e-4
+    min_learning_rate: 1.0e-5
+    weight_decay: 1.0e-2
+  dropout: 0.1
+  use_gpu: true
+
+run:
+  # 60k-hit v5 dataset (same as slab_deep_extreme_v5_small). Epoch count set after a dry-run measures
+  # real per-epoch time on this dataset/arch combination -- large arch was ~20.6s/epoch on the smaller
+  # 40k v1 dataset (141 batches/epoch), so expect somewhat longer here (211 batches/epoch @ 60k).
+  run_name: "slab_deep_extreme_v5_large"
+  save_every: 20
+  run_folder: ???
+  early_stop: False
+  patience: 250
+  min_delta: 1.0e-6
+  num_epochs: 500
+
+eval:
+  eval_idxs: [1, 25, 115]
+  min_series_length: 5

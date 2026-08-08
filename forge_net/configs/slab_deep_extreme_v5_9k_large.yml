@@ -1,0 +1,47 @@
+databases:
+  db1: "unused_data_out_already_exists"
+  db2: "unused_data_out_already_exists"
+  lines: 1
+
+datasets:
+  points_per_state: 9000
+  mask_points: false
+  seed: 42
+  canonical_frame: false
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_extreme_v5_9k/slab_dataset.npz"
+
+network:
+  arch: "large" # same 60k-hit series/physics as slab_deep_extreme_v5_large, but resampled at ~9000 pts/state
+    # (up from 2048) -- current mesh has 4322 vertices / 8640 triangles (NUM_SLABS=60, N_THETA=72), so 2048
+    # points covered only ~21% of triangles per sample (Poisson-coverage estimate); 9000 pts is close to the
+    # full-mesh-resolution ceiling (1 pt/triangle) without oversampling into redundant same-triangle points.
+    # Isolates point density as the only variable vs. slab_deep_extreme_v5_large.
+  use_res: true # required key for arch=="large" (trainer.py reads it via direct dict access, not .get)
+  loss: "mse"
+  batch_size: 256
+  latent_size: 512
+  action_features: ["steps", "positions", "rotations_norm"]
+  action_dims: 3
+  gradient_clip: 1.0
+  optimizer:
+    base_learning_rate: 5.0e-4
+    min_learning_rate: 1.0e-5
+    weight_decay: 1.0e-2
+  dropout: 0.1
+  use_gpu: true
+
+run:
+  # Epoch count set after a dry-run measures real per-epoch time at this point density (per-point MLP cost
+  # scales ~linearly with N, so expect roughly 9000/2048 ~ 4.4x slab_deep_extreme_v5_large's ~31s/epoch,
+  # before accounting for the batch_size=256 memory footprint -- may need reducing if OOM).
+  run_name: "slab_deep_extreme_v5_9k_large"
+  save_every: 20
+  run_folder: ???
+  early_stop: False
+  patience: 250
+  min_delta: 1.0e-6
+  num_epochs: 500
+
+eval:
+  eval_idxs: [1, 25, 115]
+  min_series_length: 5

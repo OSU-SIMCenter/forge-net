@@ -1,0 +1,44 @@
+Datasets already exists skipping creation
+Using MSE loss function
+
+Initializing model with point_size=2048, latent_size=512
+Architecture: large (forge_net.model.model)
+Total trainable parameters: 656,131
+
+================================================================================
+STARTING TRAINING
+================================================================================
+
+W0803 12:59:09.770871 1274420 bfc_allocator.cc:514] Allocator (GPU_0_bfc) ran out of memory trying to allocate 16.53GiB (rounded to 17746129408)requested by op 
+If the cause is memory fragmentation maybe the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' will improve the situation. 
+Current allocation summary follows.
+Current allocation summary follows.
+W0803 12:59:09.771525 1274420 bfc_allocator.cc:525] ___________________________________________________________________________________________________*
+Traceback (most recent call last):
+  File "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/main.py", line 50, in <module>
+    main()    
+    ^^^^^^
+  File "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/main.py", line 36, in main
+    trainer.train()
+  File "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/model/trainer.py", line 288, in train
+    self.train_loss = self.train_epoch()
+                      ^^^^^^^^^^^^^^^^^^
+  File "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/model/trainer.py", line 332, in train_epoch
+    epoch_loss += loss.item()
+                  ^^^^^^^^^^^
+  File "/local/scratch/groves/miniconda3/envs/jax_forgeRL/lib/python3.12/site-packages/jax/_src/numpy/array_methods.py", line 275, in _item
+    arr = core.concrete_or_error(np.asarray, self, context="This occurred in the item() method of jax.Array")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/local/scratch/groves/miniconda3/envs/jax_forgeRL/lib/python3.12/site-packages/jax/_src/core.py", line 1908, in concrete_or_error
+    return force(val)
+           ^^^^^^^^^^
+  File "/local/scratch/groves/miniconda3/envs/jax_forgeRL/lib/python3.12/site-packages/jax/_src/array.py", line 414, in __array__
+    return np.asarray(self._value, dtype=dtype, **kwds)  # pyrefly: ignore[no-matching-overload]
+                      ^^^^^^^^^^^
+  File "/local/scratch/groves/miniconda3/envs/jax_forgeRL/lib/python3.12/site-packages/jax/_src/profiler.py", line 427, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/local/scratch/groves/miniconda3/envs/jax_forgeRL/lib/python3.12/site-packages/jax/_src/array.py", line 614, in _value
+    npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+jax.errors.JaxRuntimeError: RESOURCE_EXHAUSTED: Out of memory while trying to allocate 16.53GiB. [tf-allocator-allocation-error=''] [executable_name='jit_train_step']

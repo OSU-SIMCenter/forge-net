@@ -1,0 +1,53 @@
+databases:
+  db1: "unused_data_out_already_exists"
+  db2: "unused_data_out_already_exists"
+  lines: 1
+
+datasets:
+  points_per_state: 2048 # bumped from 512 (slab_raw3d_v1) -- worth the extra compute for resolution
+  mask_points: false
+  seed: 42
+  canonical_frame: false
+  data_out: "/local/scratch/groves/forge-genie/forge-net/forge_net/data/datasets/slab_deep_v1/slab_dataset.npz"
+
+network:
+  arch: "small"
+  loss: "mse" # dataset is barycentric-correspondence-preserving, MSE on the predicted delta is well-posed
+  batch_size: 256 # halved from 512 (slab_raw3d_v1) -- 2048 points/sample is 4x the per-sample point
+    # count, keeping batch_size unchanged would roughly 4x the per-step compute/memory; halving batch
+    # size trades some throughput for headroom, still large enough for stable BatchNorm statistics
+  latent_size: 512
+  action_features: ["steps", "positions", "rotations_norm"] # rotations_norm (degrees/180), NOT plain
+    # "rotations" (raw degrees) -- steps/positions are already normalized (divided by length_scale_mm)
+    # at generation time in the npz itself; rotations_norm is the one action component normalized at
+    # LOAD time instead, since forge_net.utils.common.actions_from_feature_map's quat->degrees
+    # conversion happens then, not something bakeable into the npz directly. See
+    # forge_genie/scripts/generate_forgenet_slab_dataset.py's v2 docstring for the full rationale.
+  action_dims: 3
+  gradient_clip: 1.0
+  optimizer:
+    base_learning_rate: 5.0e-4
+    min_learning_rate: 1.0e-5
+    weight_decay: 1.0e-2
+  dropout: 0.1
+  use_gpu: true
+
+run:
+  # slab_raw3d_v1_300ep (previous dataset, 512pts, shallow strikes, unnormalized) converged cleanly
+  # by ~epoch 250 of 300. This dataset is harder (deeper strikes -> bigger deltas, more point-cloud
+  # detail) and the ask was explicitly to "train for a good bit longer". A dry run measured steady-
+  # state epoch time at ~4s/epoch (2048pts, batch 256) -- 800 epochs is ~53min, still cheap, giving
+  # real convergence margin rather than guessing an epoch count from the 512pt run's timing.
+  run_name: "slab_deep_v1"
+  save_every: 20
+  run_folder: ???
+  early_stop: False
+  patience: 250
+  min_delta: 1.0e-6
+  num_epochs: 800
+
+eval:
+  eval_idxs: [1, 25, 115]
+  min_series_length: 5 # this dataset's series cap at 20 hits (deep-strike, short-series design) --
+    # main.py's default (35) would find zero eligible series and crash `plot_eval_series` at the very
+    # end of a long run instead of just an empty report

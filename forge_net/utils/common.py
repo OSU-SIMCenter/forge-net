@@ -60,7 +60,25 @@ def actions_from_feature_map(action_features, data):
     feature_map = {
         "steps": lambda: data['steps'],
         "positions": lambda: data['positions'][:, 0].reshape(-1, 1), #if positions we only care about translation in X
-        "rotations": lambda: np.array([[quat_to_eulerxyz_np(quat)[0]] for quat in data['rotations']]) #if rotations we only care about rotation about x
+        "rotations": lambda: np.array([[quat_to_eulerxyz_np(quat)[0]] for quat in data['rotations']]), #if rotations we only care about rotation about x
+        # Normalized companion to "rotations" -- degrees/180, so it's on a
+        # comparable O(1) scale to a coordinate/action pipeline that's
+        # normalized by a length scale (see forge_genie/scripts/
+        # generate_forgenet_slab_dataset.py's `--length-scale-mm`). Additive:
+        # "rotations" above is untouched, existing configs unaffected.
+        "rotations_norm": lambda: np.array(
+            [[quat_to_eulerxyz_np(quat)[0] / 180.0] for quat in data['rotations']]
+        ),
+        # forge_common canonical action (see process_data_forge_common.py):
+        # rho/z in mm, phi in RADIANS (raw, not sin/cos -- the press is
+        # double-sided/symmetric, so a strike is physically identical to the
+        # same strike +180deg, meaning every real phi value the data
+        # generator ever produces stays well within a single ~180deg span
+        # with no wraparound to worry about), duration in seconds.
+        "rho": lambda: data['rho'].reshape(-1, 1),
+        "phi": lambda: data['phi'].reshape(-1, 1),
+        "z": lambda: data['z'].reshape(-1, 1),
+        "duration": lambda: data['duration'].reshape(-1, 1),
     }
     return np.hstack([feature_map[f]() for f in action_features])
 

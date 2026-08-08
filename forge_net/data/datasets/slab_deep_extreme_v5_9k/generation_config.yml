@@ -1,0 +1,23 @@
+component_n_hits:
+- 20032
+- 20032
+- 20032
+component_sources:
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5_9k
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_extreme_v5a_9k
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_extreme_v5b_9k
+length_scale_mm: 20.0
+max_volume_drift: 3.165200018484768e-07
+n_hits: 60096
+n_points_per_state: 9000
+n_series: 2554
+normalize: true
+source: 'combined: /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5_9k
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_extreme_v5a_9k
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_extreme_v5b_9k'
+strike_kwargs:
+  beta: 0.589620292281874
+  force_correct_closure: 0.0
+  plastic_decay_ahead_mm: 1.7999796897932407
+  plastic_decay_behind_mm: 1.7999796897932407
+  plastic_kernel_power: 1.4725154688908244

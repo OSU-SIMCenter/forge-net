@@ -1,0 +1,111 @@
+component_n_hits:
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+- 625
+component_sources:
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_1
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_10
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_11
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_12
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_13
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_14
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_15
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_16
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_17
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_18
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_19
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_2
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_20
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_21
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_22
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_23
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_24
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_25
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_26
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_27
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_28
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_29
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_3
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_30
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_31
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_32
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_4
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_5
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_6
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_7
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_8
+- /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_9
+length_scale_mm: 20.0
+max_volume_drift: 2.1101320098585368e-07
+n_hits: 20000
+n_points_per_state: 2048
+n_series: 1652
+normalize: true
+source: 'combined: /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_1
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_10
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_11
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_12
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_13
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_14
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_15
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_16
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_17
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_18
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_19
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_2
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_20
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_21
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_22
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_23
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_24
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_25
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_26
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_27
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_28
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_29
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_3
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_30
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_31
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_32
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_4
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_5
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_6
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_7
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_8
+  + /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_v5/chunks/chunk_9'
+strike_kwargs:
+  beta: 0.589620292281874
+  force_correct_closure: false
+  plastic_decay_ahead_mm: 1.7999796897932407
+  plastic_decay_behind_mm: 1.7999796897932407
+  plastic_kernel_power: 1.4725154688908244
+used_tuned_kernel: true

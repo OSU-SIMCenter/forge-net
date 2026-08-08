@@ -1,0 +1,229 @@
+Datasets already exists skipping creation
+Using JAX-native Chamfer distance loss function
+
+Initializing model with point_size=2048, latent_size=512
+Architecture: large (forge_net.model.model)
+Total trainable parameters: 656,131
+
+================================================================================
+STARTING TRAINING
+================================================================================
+
+epoch 0 train loss: 6.7304405 test loss: 6.6639606 epoch time: 54.29s
+  LR: 0.000005
+  ✓ Saved best model (test_loss: 6.663961)
+  ✓ Saved best model (test_loss: 6.663961)
+  Early stopping: initialized
+epoch 1 train loss: 5.5163587 test loss: 6.9036121 epoch time: 28.62s
+  LR: 0.000010
+  Early stopping: 1/50 (best: epoch 0, loss 6.663961)
+epoch 2 train loss: 4.0715595 test loss: 6.3304057 epoch time: 28.61s
+  LR: 0.000015
+  ✓ Saved best model (test_loss: 6.330406)
+  ✓ Saved best model (test_loss: 6.330406)
+  Early stopping: improvement of 0.333555, counter reset
+epoch 3 train loss: 2.9061547 test loss: 3.9354707 epoch time: 28.73s
+  LR: 0.000020
+  ✓ Saved best model (test_loss: 3.935471)
+  ✓ Saved best model (test_loss: 3.935471)
+  Early stopping: improvement of 2.394935, counter reset
+epoch 4 train loss: 2.2904819 test loss: 3.3878637 epoch time: 28.87s
+  LR: 0.000025
+  ✓ Saved best model (test_loss: 3.387864)
+  ✓ Saved best model (test_loss: 3.387864)
+  Early stopping: improvement of 0.547607, counter reset
+epoch 5 train loss: 2.0004592 test loss: 3.2677223 epoch time: 28.14s
+  LR: 0.000030
+  ✓ Saved best model (test_loss: 3.267722)
+  ✓ Saved best model (test_loss: 3.267722)
+  Early stopping: improvement of 0.120141, counter reset
+epoch 6 train loss: 1.8055844 test loss: 3.3600405 epoch time: 28.73s
+  LR: 0.000035
+  Early stopping: 1/50 (best: epoch 5, loss 3.267722)
+epoch 7 train loss: 1.6405044 test loss: 3.3753931 epoch time: 28.68s
+  LR: 0.000040
+  Early stopping: 2/50 (best: epoch 5, loss 3.267722)
+epoch 8 train loss: 1.5013030 test loss: 3.2951150 epoch time: 28.83s
+  LR: 0.000045
+  Early stopping: 3/50 (best: epoch 5, loss 3.267722)
+epoch 9 train loss: 1.3797825 test loss: 3.5337214 epoch time: 28.75s
+  LR: 0.000050
+  Early stopping: 4/50 (best: epoch 5, loss 3.267722)
+epoch 10 train loss: 1.2578918 test loss: 3.6942050 epoch time: 28.58s
+  LR: 0.000055
+  Early stopping: 5/50 (best: epoch 5, loss 3.267722)
+epoch 11 train loss: 1.1847107 test loss: 3.8231519 epoch time: 28.74s
+  LR: 0.000060
+  Early stopping: 6/50 (best: epoch 5, loss 3.267722)
+epoch 12 train loss: 1.1322576 test loss: 4.2970659 epoch time: 28.14s
+  LR: 0.000065
+  Early stopping: 7/50 (best: epoch 5, loss 3.267722)
+epoch 13 train loss: 1.0774499 test loss: 4.4984061 epoch time: 28.62s
+  LR: 0.000070
+  Early stopping: 8/50 (best: epoch 5, loss 3.267722)
+epoch 14 train loss: 1.0222695 test loss: 4.5419163 epoch time: 28.75s
+  LR: 0.000075
+  Early stopping: 9/50 (best: epoch 5, loss 3.267722)
+epoch 15 train loss: 0.9881508 test loss: 4.3441223 epoch time: 28.75s
+  LR: 0.000080
+  Early stopping: 10/50 (best: epoch 5, loss 3.267722)
+epoch 16 train loss: 0.9637922 test loss: 4.8683271 epoch time: 28.66s
+  LR: 0.000085
+  Early stopping: 11/50 (best: epoch 5, loss 3.267722)
+epoch 17 train loss: 0.9402339 test loss: 4.9585970 epoch time: 28.72s
+  LR: 0.000090
+  Early stopping: 12/50 (best: epoch 5, loss 3.267722)
+epoch 18 train loss: 0.9237128 test loss: 5.3312709 epoch time: 28.56s
+  LR: 0.000095
+  Early stopping: 13/50 (best: epoch 5, loss 3.267722)
+epoch 19 train loss: 0.9034706 test loss: 5.7811191 epoch time: 28.56s
+  LR: 0.000100
+  Early stopping: 14/50 (best: epoch 5, loss 3.267722)
+epoch 20 train loss: 0.8912082 test loss: 5.8610675 epoch time: 28.60s
+  LR: 0.000099
+  Early stopping: 15/50 (best: epoch 5, loss 3.267722)
+epoch 21 train loss: 0.8852948 test loss: 5.3833325 epoch time: 28.67s
+  LR: 0.000099
+  Early stopping: 16/50 (best: epoch 5, loss 3.267722)
+epoch 22 train loss: 0.8486223 test loss: 5.8956527 epoch time: 28.61s
+  LR: 0.000098
+  Early stopping: 17/50 (best: epoch 5, loss 3.267722)
+epoch 23 train loss: 0.8466500 test loss: 5.9333269 epoch time: 28.58s
+  LR: 0.000098
+  Early stopping: 18/50 (best: epoch 5, loss 3.267722)
+epoch 24 train loss: 0.8305829 test loss: 5.9057974 epoch time: 28.72s
+  LR: 0.000097
+  Early stopping: 19/50 (best: epoch 5, loss 3.267722)
+epoch 25 train loss: 0.8264996 test loss: 5.9100098 epoch time: 28.67s
+  LR: 0.000097
+  Early stopping: 20/50 (best: epoch 5, loss 3.267722)
+epoch 26 train loss: 0.8211831 test loss: 5.7528615 epoch time: 28.73s
+  LR: 0.000096
+  Early stopping: 21/50 (best: epoch 5, loss 3.267722)
+epoch 27 train loss: 0.8239434 test loss: 5.4089461 epoch time: 28.80s
+  LR: 0.000096
+  Early stopping: 22/50 (best: epoch 5, loss 3.267722)
+epoch 28 train loss: 0.8161229 test loss: 5.7727442 epoch time: 28.67s
+  LR: 0.000095
+  Early stopping: 23/50 (best: epoch 5, loss 3.267722)
+epoch 29 train loss: 0.7962920 test loss: 5.9119011 epoch time: 28.45s
+  LR: 0.000094
+  Early stopping: 24/50 (best: epoch 5, loss 3.267722)
+epoch 30 train loss: 0.7985830 test loss: 4.7209783 epoch time: 28.71s
+  LR: 0.000094
+  Early stopping: 25/50 (best: epoch 5, loss 3.267722)
+epoch 31 train loss: 0.7941987 test loss: 5.3988566 epoch time: 28.82s
+  LR: 0.000093
+  Early stopping: 26/50 (best: epoch 5, loss 3.267722)
+epoch 32 train loss: 0.7950918 test loss: 5.8215189 epoch time: 28.61s
+  LR: 0.000093
+  Early stopping: 27/50 (best: epoch 5, loss 3.267722)
+epoch 33 train loss: 0.7862746 test loss: 5.0585222 epoch time: 28.70s
+  LR: 0.000092
+  Early stopping: 28/50 (best: epoch 5, loss 3.267722)
+epoch 34 train loss: 0.7851363 test loss: 5.2966088 epoch time: 28.64s
+  LR: 0.000092
+  Early stopping: 29/50 (best: epoch 5, loss 3.267722)
+epoch 35 train loss: 0.7830171 test loss: 5.2837086 epoch time: 28.79s
+  LR: 0.000091
+  Early stopping: 30/50 (best: epoch 5, loss 3.267722)
+epoch 36 train loss: 0.7727372 test loss: 5.7661151 epoch time: 28.22s
+  LR: 0.000091
+  Early stopping: 31/50 (best: epoch 5, loss 3.267722)
+epoch 37 train loss: 0.7706545 test loss: 5.9467114 epoch time: 28.65s
+  LR: 0.000090
+  Early stopping: 32/50 (best: epoch 5, loss 3.267722)
+epoch 38 train loss: 0.7600129 test loss: 5.4100099 epoch time: 28.58s
+  LR: 0.000089
+  Early stopping: 33/50 (best: epoch 5, loss 3.267722)
+epoch 39 train loss: 0.7638643 test loss: 5.8086438 epoch time: 28.64s
+  LR: 0.000089
+  Early stopping: 34/50 (best: epoch 5, loss 3.267722)
+epoch 40 train loss: 0.7514105 test loss: 5.6862280 epoch time: 28.68s
+  LR: 0.000088
+  Early stopping: 35/50 (best: epoch 5, loss 3.267722)
+epoch 41 train loss: 0.7522093 test loss: 5.6645365 epoch time: 28.76s
+  LR: 0.000088
+  Early stopping: 36/50 (best: epoch 5, loss 3.267722)
+epoch 42 train loss: 0.7530042 test loss: 5.7072914 epoch time: 28.73s
+  LR: 0.000087
+  Early stopping: 37/50 (best: epoch 5, loss 3.267722)
+epoch 43 train loss: 0.7536946 test loss: 5.7929267 epoch time: 28.68s
+  LR: 0.000087
+  Early stopping: 38/50 (best: epoch 5, loss 3.267722)
+epoch 44 train loss: 0.7511388 test loss: 5.3598467 epoch time: 28.66s
+  LR: 0.000086
+  Early stopping: 39/50 (best: epoch 5, loss 3.267722)
+epoch 45 train loss: 0.7559723 test loss: 5.5552514 epoch time: 28.72s
+  LR: 0.000086
+  Early stopping: 40/50 (best: epoch 5, loss 3.267722)
+epoch 46 train loss: 0.7483744 test loss: 5.6957674 epoch time: 28.80s
+  LR: 0.000085
+  Early stopping: 41/50 (best: epoch 5, loss 3.267722)
+epoch 47 train loss: 0.7488771 test loss: 5.6083439 epoch time: 28.75s
+  LR: 0.000084
+  Early stopping: 42/50 (best: epoch 5, loss 3.267722)
+epoch 48 train loss: 0.7441087 test loss: 6.0619791 epoch time: 28.70s
+  LR: 0.000084
+  Early stopping: 43/50 (best: epoch 5, loss 3.267722)
+epoch 49 train loss: 0.7424585 test loss: 5.5168817 epoch time: 28.73s
+  LR: 0.000083
+  Early stopping: 44/50 (best: epoch 5, loss 3.267722)
+epoch 50 train loss: 0.7307867 test loss: 5.6575667 epoch time: 28.47s
+  LR: 0.000083
+  Early stopping: 45/50 (best: epoch 5, loss 3.267722)
+epoch 51 train loss: 0.7326913 test loss: 6.0495111 epoch time: 28.84s
+  LR: 0.000082
+  Early stopping: 46/50 (best: epoch 5, loss 3.267722)
+epoch 52 train loss: 0.7312376 test loss: 6.0051828 epoch time: 28.65s
+  LR: 0.000082
+  Early stopping: 47/50 (best: epoch 5, loss 3.267722)
+epoch 53 train loss: 0.7391158 test loss: 5.9843521 epoch time: 28.71s
+  LR: 0.000081
+  Early stopping: 48/50 (best: epoch 5, loss 3.267722)
+epoch 54 train loss: 0.7315923 test loss: 5.6931783 epoch time: 28.48s
+  LR: 0.000081
+  Early stopping: 49/50 (best: epoch 5, loss 3.267722)
+epoch 55 train loss: 0.7273010 test loss: 6.0688341 epoch time: 28.68s
+  LR: 0.000080
+  Early stopping: 50/50 (best: epoch 5, loss 3.267722)
+
+⚠ Early stopping triggered!
+  Best epoch: 5 with test_loss: 3.267722
+
+Stopping training at epoch 55
+
+================================================================================
+TRAINING COMPLETE
+================================================================================
+Best test loss: 3.2677223 at epoch 5
+/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/utils/plotting.py:163: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  plt.tight_layout()
+[0m[33m2026-08-03 13:26:07.333 (1660.199s) [    7F3B6B6524C0]vtkXOpenGLRenderWindow.:1460  WARN| bad X server connection. DISPLAY=[0m
+Saved figures in /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/runs/jax_chamfer_2048_unmasked_unseeded_200ep/eval/1
+/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/utils/plotting.py:163: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  plt.tight_layout()
+Saved figures in /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/runs/jax_chamfer_2048_unmasked_unseeded_200ep/eval/25
+Saved figures in /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/runs/jax_chamfer_2048_unmasked_unseeded_200ep/eval/115
+Evaluating Series:   0%|          | 0/1 [00:00<?, ?it/s]
+  0%|          | 0/34 [00:00<?, ?it/s][A
+  3%|▎         | 1/34 [00:00<00:13,  2.37it/s][A
+  9%|▉         | 3/34 [00:00<00:05,  5.94it/s][A
+ 15%|█▍        | 5/34 [00:00<00:03,  8.15it/s][A
+ 21%|██        | 7/34 [00:00<00:02,  9.61it/s][A
+ 26%|██▋       | 9/34 [00:01<00:02, 10.55it/s][A
+ 32%|███▏      | 11/34 [00:01<00:02, 11.19it/s][A
+ 38%|███▊      | 13/34 [00:01<00:01, 11.53it/s][A
+ 44%|████▍     | 15/34 [00:01<00:01, 11.75it/s][A
+ 50%|█████     | 17/34 [00:01<00:01, 11.97it/s][A
+ 56%|█████▌    | 19/34 [00:01<00:01, 12.14it/s][A
+ 62%|██████▏   | 21/34 [00:02<00:01, 12.27it/s][A
+ 68%|██████▊   | 23/34 [00:02<00:00, 12.34it/s][A
+ 74%|███████▎  | 25/34 [00:02<00:00, 12.36it/s][A
+ 79%|███████▉  | 27/34 [00:02<00:00, 12.41it/s][A
+ 85%|████████▌ | 29/34 [00:02<00:00, 12.42it/s][A
+ 91%|█████████ | 31/34 [00:02<00:00, 12.42it/s][A
+ 97%|█████████▋| 33/34 [00:02<00:00, 12.48it/s][A
+                                               [AEvaluating Series: 100%|██████████| 1/1 [00:03<00:00,  3.06s/it]Evaluating Series: 100%|██████████| 1/1 [00:03<00:00,  3.06s/it]
+
+Evaluation of 1 series complete.

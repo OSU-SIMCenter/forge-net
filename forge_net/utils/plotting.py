@@ -2,7 +2,12 @@ from forge_net.utils.common import get_tool_mesh
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import pyvista as pv
-pv.start_xvfb()
+if hasattr(pv, "start_xvfb"):
+    # Removed in newer pyvista releases (e.g. 0.48.x) -- off-screen
+    # rendering works without it there (pyvista/VTK picks OSMesa/EGL
+    # automatically), so this is just skipped rather than crashing the
+    # import on those versions.
+    pv.start_xvfb()
 pv.set_jupyter_backend('static')
 import numpy as np
 import os

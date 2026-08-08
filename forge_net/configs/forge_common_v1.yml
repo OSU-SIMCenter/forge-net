@@ -1,0 +1,59 @@
+# Train against forge_common.db (forge_common/data/forge_common.db) instead
+# of the legacy `strike`/`forge_database.db` schema -- use with
+# process_data_forge_common.make_dataset/make_dataloaders, NOT
+# process_data.py's (see main.py's import line -- swap it to
+# `from forge_net.data.process_data_forge_common import make_dataloaders, make_dataset`).
+#
+# Action space here is forge_common's own canonical Hit(rho, phi, z,
+# duration) -- rho/z in mm, phi in RADIANS (raw; the press is double-sided
+# so every phi value forge_common ever produces stays well within a single
+# ~180deg span, no sin/cos wraparound handling needed -- see
+# process_data_forge_common.py's module docstring). `duration` is left out
+# of action_features below since every forge_common hit so far uses
+# duration=1.0 (a constant carries no training signal); add it back if
+# that ever varies.
+databases:
+  db_path: "/local/scratch/groves/jax-forgeRL/forge_common/data/forge_common.db"
+  source_sims: ["cw_slab_model"] # null/omit for all three sims once jax_forge/agility_forge_data data exists in volume
+  sequence_types: ["cogging"] # null/omit for all sequence types (real_replay + cogging)
+
+datasets:
+  total_points: 2048 # points sampled per mesh (volumetric tet sampling when a mesh has tetra, else surface-only)
+  seed: 0
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/cw_slab_model_cogging.npz"
+
+network:
+  model_type: "forgenet"
+  arch: "small" # still cheap/fast; revisit "large" once data volume grows well past ~1k pairs
+  batch_size: 32 # 786 pairs (50 heuristic+random cw_slab_model runs, 2026-07-19) -- bump further as data grows
+  latent_size: 128
+  action_features: ["rho", "phi", "z"]
+  action_dims: 3
+  gradient_clip: 1.0
+  use_res: False
+  loss: "mse"
+  optimizer:
+    base_learning_rate: 1.0e-4
+    min_learning_rate: 1.0e-7
+    weight_decay: 1.0e-2
+  scheduler:
+    start_factor: 1.0
+    end_factor: 0.05
+    lr_decay_rate: 1.0e-3
+    lr_decay_step: 1.0
+  dropout: 0.1
+  use_gpu: True
+
+run:
+  run_name: "forge_common_v1_cw_slab_cogging"
+  save_every: 50
+  run_folder: ???
+  early_stop: False # trainer.py bug: self.early_stop doubles as both the config flag AND the
+                    # "patience exceeded" trigger -- setting True here breaks the loop at epoch 0
+                    # regardless of patience (every other config in this repo avoids it the same way)
+  patience: 50
+  min_delta: 1.0e-6
+  num_epochs: 300
+
+eval:
+  eval_idxs: [0, 100, 300, 500, 700]

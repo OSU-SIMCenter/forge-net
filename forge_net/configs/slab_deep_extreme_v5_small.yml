@@ -1,0 +1,45 @@
+databases:
+  db1: "unused_data_out_already_exists"
+  db2: "unused_data_out_already_exists"
+  lines: 1
+
+datasets:
+  points_per_state: 2048
+  mask_points: false
+  seed: 42
+  canonical_frame: false
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_extreme_v5/slab_dataset.npz"
+
+network:
+  arch: "small" # switched back from "large" -- user's own empirical finding: residual layers didn't help
+    # much for this problem. Consistent with earlier session evidence too: slab_deep_v1 (small, 20k) and
+    # slab_deep_extreme_v1_large (large, 40k) landed at essentially the same normalized fit quality
+    # (~15% unexplained variance / R^2~0.85) despite large having 3.6x the params and 2x the data.
+  loss: "mse"
+  batch_size: 256
+  latent_size: 512
+  action_features: ["steps", "positions", "rotations_norm"]
+  action_dims: 3
+  gradient_clip: 1.0
+  optimizer:
+    base_learning_rate: 5.0e-4
+    min_learning_rate: 1.0e-5
+    weight_decay: 1.0e-2
+  dropout: 0.1
+  use_gpu: true
+
+run:
+  # v5: 60k-hit dataset (deep 20k + extreme 20k x2), real-data-tuned kernel shape (beta/plastic_decay/
+  # kernel_power), fixed x_max coverage + explicit 15mm x_min safe zone, GUIDs. Epoch count set after a
+  # dry-run measures real per-epoch time on this dataset/arch combination.
+  run_name: "slab_deep_extreme_v5_small"
+  save_every: 20
+  run_folder: ???
+  early_stop: False
+  patience: 250
+  min_delta: 1.0e-6
+  num_epochs: 800
+
+eval:
+  eval_idxs: [1, 25, 115]
+  min_series_length: 5

@@ -1,0 +1,51 @@
+databases:
+  db1: "unused_data_out_already_exists"
+  db2: "unused_data_out_already_exists"
+  lines: 1
+
+datasets:
+  points_per_state: 2048
+  mask_points: false
+  seed: 42
+  canonical_frame: false
+  data_out: "/local/scratch/groves/forge-genie/forge-net/forge_net/data/datasets/slab_deep_extreme_v1/slab_dataset.npz"
+
+network:
+  arch: "large" # switched from "small" -- confirmed via historical runs on identical 2048pt/MSE data
+    # that large reaches ~14% lower loss (1.229 vs 1.423) than small, which has zero residual
+    # connections; combined with a MAP-Elites search on the small-arch model producing a rolled-out
+    # point cloud that physically exploded (radial coords to 1680mm on a ~20mm-radius part), capacity
+    # is a real, if secondary, contributor worth fixing alongside the primary data-diversity fix.
+  use_res: true # required key for arch=="large" (trainer.py reads it via direct dict access, not .get)
+  loss: "mse"
+  batch_size: 256
+  latent_size: 512
+  action_features: ["steps", "positions", "rotations_norm"]
+  action_dims: 3
+  gradient_clip: 1.0
+  optimizer:
+    base_learning_rate: 5.0e-4
+    min_learning_rate: 1.0e-5
+    weight_decay: 1.0e-2
+  dropout: 0.1
+  use_gpu: true
+
+run:
+  # combined 40k-hit dataset (slab_deep_v1's 20k short/capped-20-hit series + slab_extreme_v1's 20k
+  # long-up-to-70-hit, heuristic+random-mixed, 15-45%-of-current-gap series) -- directly targets the
+  # autoregressive-rollout failure mode found via the t3 MAP-Elites search. Dry run measured
+  # ~20.6s/epoch steady-state (large arch, 806,403 params, 141 batches/epoch) -- 800 epochs would be
+  # ~4.6hr, too long; 500 epochs (~2.9hr) gives ~1.26x the total gradient steps of the successful
+  # slab_deep_v1/small 800-epoch run (500*141 vs 800*70 batches), reasonable extra budget for a
+  # harder/more diverse dataset and bigger model.
+  run_name: "slab_deep_extreme_v1_large"
+  save_every: 20
+  run_folder: ???
+  early_stop: False
+  patience: 250
+  min_delta: 1.0e-6
+  num_epochs: 500
+
+eval:
+  eval_idxs: [1, 25, 115]
+  min_series_length: 5 # combined dataset still has some short (5-20 hit) series from slab_deep_v1
