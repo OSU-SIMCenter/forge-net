@@ -13,14 +13,27 @@
 # duration=1.0 (a constant carries no training signal); add it back if
 # that ever varies.
 databases:
-  db_path: "/local/scratch/groves/jax-forgeRL/forge_common/data/forge_common.db"
-  source_sims: ["cw_slab_model"] # null/omit for all three sims once jax_forge/agility_forge_data data exists in volume
-  sequence_types: ["cogging"] # null/omit for all sequence types (real_replay + cogging)
+  db_path: "/local/scratch/groves/forge_common/data/forge_common.db"
+  source_sims: ["jax_forge", "agility_forge_data", "agility_forge_physforge", "cw_slab_model", "genesis"]
+                     # pooling all 4 mesh-based sims' real_replay + cogging data, PLUS genesis, whose
+                     # raw MPM particles (cell_type='point_cloud', no mesh connectivity) now have their
+                     # own dispatch path in process_data_forge_common.py::process_series -- direct
+                     # particle-index correspondence (MPM never creates/destroys/reorders particles
+                     # mid-run), no barycentric sampling. See datasets.point_cloud_noise_std below.
+  sequence_types: null # pooling both real_replay and cogging
 
 datasets:
   total_points: 2048 # points sampled per mesh (volumetric tet sampling when a mesh has tetra, else surface-only)
   seed: 0
-  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/cw_slab_model_cogging.npz"
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/forge_common_pooled_v1.npz"
+  point_cloud_noise_std: 0.2 # mm -- Gaussian jitter (mean 0) for cell_type='point_cloud' pairs (genesis),
+                             # applied per-epoch in the dataloader (same draw on both x_t/x_tp1, see
+                             # dataloaders.py::SingleStepMeshTransitionDataset's docstring for why). Grounded
+                             # in genesis's actual MPM particle spacing (Genesis/agforge/options.py: dx/2 with
+                             # our real stock diameter=0.04m -> particle_size~=2.86mm) -- 0.2mm is ~5-10% of
+                             # that spacing: enough to break exact grid-alignment, well below the spacing
+                             # itself so real geometric signal isn't scrambled. Starting point, not yet
+                             # empirically validated against training quality.
 
 network:
   model_type: "forgenet"
@@ -45,7 +58,7 @@ network:
   use_gpu: True
 
 run:
-  run_name: "forge_common_v1_cw_slab_cogging"
+  run_name: "forge_common_pooled_v1"
   save_every: 50
   run_folder: ???
   early_stop: False # trainer.py bug: self.early_stop doubles as both the config flag AND the
@@ -53,7 +66,8 @@ run:
                     # regardless of patience (every other config in this repo avoids it the same way)
   patience: 50
   min_delta: 1.0e-6
-  num_epochs: 300
+  num_epochs: 30 # pilot-scale smoke test of the pooled-source pipeline, not a converged model -- bump once
+                 # data volume/source balance is revisited (see DEVELOPER_NOTES.md open follow-ups)
 
 eval:
   eval_idxs: [0, 100, 300, 500, 700]

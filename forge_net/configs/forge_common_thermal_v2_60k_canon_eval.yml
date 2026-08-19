@@ -1,0 +1,63 @@
+databases:
+  db_path: /local/scratch/groves/forge_common/data/forge_common_thermal_60k.db
+  sequence_types:
+  - cogging
+  source_sims:
+  - cw_slab_model
+datasets:
+  data_out: /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/cw_slab_model_cogging_thermal_60k_canon.npz
+  seed: 0
+  total_points: 4096
+eval:
+  eval_idxs:
+  - 0
+  - 5000
+  - 15000
+  - 25000
+  - 40000
+network:
+  action_dims: 3
+  # phi DROPPED -- per-hit canonicalization (process_data_forge_common.py's
+  # _phi_to_canonical_quat) now rotates every pair's coords_t/coords_tp1 so
+  # this hit's own phi always lands at the same fixed reference direction
+  # (phi=0), so it's implicit in the geometry the network sees rather than
+  # an explicit input. duration ADDED -- already recorded per-hit in the DB
+  # (Hit.duration) and already a valid actions_from_feature_map key.
+  action_features:
+  - rho
+  - z
+  - duration
+  arch: large
+  batch_size: 32
+  dropout: 0.1
+  gradient_clip: 1.0
+  latent_size: 128
+  loss: mse
+  model_type: forgenet
+  predict_temperature: true
+  temp_loss_weight: 1.0
+  optimizer:
+    base_learning_rate: 0.0001
+    min_learning_rate: 1.0e-07
+    weight_decay: 0.01
+  point_size: 4096
+  scheduler:
+    end_factor: 0.05
+    lr_decay_rate: 0.001
+    lr_decay_step: 1.0
+    start_factor: 1.0
+  use_gpu: true
+  use_res: false
+run:
+  early_stop: true
+  min_delta: 1.0e-06
+  num_epochs: 300
+  patience: 30
+  # Points at a SEPARATE COPY of the live run directory -- orbax's
+  # CheckpointManager (max_to_keep=1) continuously overwrites the single
+  # best checkpoint in the LIVE run_folder while training is still going,
+  # so reading it directly risks a race. This eval config reads a frozen
+  # snapshot instead (`cp -r` of the live run_folder).
+  run_folder: /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/runs/forge_common_thermal_v2_60k_canon_eval
+  run_name: forge_common_thermal_v2_60k_canon_eval
+  save_every: 50

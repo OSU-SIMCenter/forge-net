@@ -1,0 +1,59 @@
+databases:
+  db_path: /local/scratch/groves/forge_common/data/forge_common_thermal_60k.db
+  sequence_types:
+  - cogging
+  source_sims:
+  - cw_slab_model
+datasets:
+  data_out: /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/cw_slab_model_cogging_thermal_60k_xl_centered_fixedseed.npz
+  seed: 0
+  total_points: 4096
+  adaptive_sampling: true
+  adaptive_sampling_scale_mm: 10.0
+  adaptive_sampling_boost: 4.0
+  center_hit_z: true
+  per_pair_seed: false
+eval:
+  eval_idxs:
+  - 0
+  - 5000
+  - 15000
+  - 25000
+  - 40000
+network:
+  action_dims: 2
+  action_features:
+  - rho
+  - duration
+  arch: xl
+  batch_size: 32
+  dropout: 0.1
+  gradient_clip: 1.0
+  latent_size: 128
+  loss: mse
+  model_type: forgenet
+  predict_temperature: true
+  temp_loss_weight: 1.0
+  optimizer:
+    base_learning_rate: 0.0001
+    min_learning_rate: 1.0e-07
+    weight_decay: 0.01
+  point_size: 4096
+  scheduler:
+    end_factor: 0.05
+    lr_decay_rate: 0.001
+    lr_decay_step: 1.0
+    start_factor: 1.0
+  use_gpu: true
+  use_res: false
+run:
+  early_stop: true
+  min_delta: 1.0e-06
+  num_epochs: 300
+  patience: 30
+  # Points at a SEPARATE COPY of the live run directory -- orbax's
+  # CheckpointManager (max_to_keep=1) continuously overwrites the single
+  # best checkpoint in the LIVE run_folder while training is still going.
+  run_folder: /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/runs/forge_common_thermal_v2_60k_xl_eval
+  run_name: forge_common_thermal_v2_60k_xl_eval
+  save_every: 50

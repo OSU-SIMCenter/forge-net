@@ -1,0 +1,89 @@
+databases:
+  db_path: /local/scratch/groves/forge_common/data/forge_common_thermal_60k.db
+  sequence_types:
+  - cogging
+  source_sims:
+  - cw_slab_model
+datasets:
+  # NEW file, distinct from the canon-only npz -- adaptive_sampling changes
+  # the actual point DISTRIBUTION (denser near the press), not just an
+  # architecture change, so it needs its own dataset build.
+  data_out: /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/cw_slab_model_cogging_thermal_60k_attention.npz
+  seed: 0
+  total_points: 4096
+  # Boundary-biased tetra sampling density (process_data_forge_common.py's
+  # _boundary_sampling_weights) -- more points near the press-contact
+  # region, without excluding the rest of the mesh. scale_mm/boost left at
+  # their defaults (10mm falloff, peak 5x density) -- see that function's
+  # docstring for the reasoning.
+  adaptive_sampling: true
+  adaptive_sampling_scale_mm: 10.0
+  adaptive_sampling_boost: 4.0
+eval:
+  eval_idxs:
+  - 0
+  - 5000
+  - 15000
+  - 25000
+  - 40000
+network:
+  action_dims: 3
+  # Same action-space choice as forge_common_thermal_v2_60k_canon.yml (phi
+  # dropped -- implicit via per-hit canonicalization; duration added -- see
+  # that config's comment for the full reasoning). This file's own change
+  # is the ARCHITECTURE (arch: attention) and adaptive_sampling above, not
+  # the action space -- kept identical to isolate which change helped.
+  action_features:
+  - rho
+  - z
+  - duration
+  arch: attention
+  # attn_k=8 (down from the LocalAttentionBlock default of 16) -- the FIRST
+  # run at k=16/batch=8 profiled at ~120ms/train_step, and a no-attention
+  # ablation confirmed the local-attention branch was ~94% of that cost
+  # (6.6ms without it). Cost scales with k (benchmarked at batch=8:
+  # k=4->37.8ms, k=8->64.6ms, k=16->120.6ms, k=32->260.4ms) -- NOT with
+  # top_k specifically (jax.lax.top_k benchmarked at only ~14ms in
+  # isolation; jax.lax.approx_max_k was tried as a fix and was actually
+  # SLOWER at this N/k, so the real cost is the Dense projections + gather
+  # over the (B,N,k,latent_size) neighbor tensors and their gradients, not
+  # neighbor SELECTION). k=8 is a real quality/speed tradeoff, not free --
+  # picked as a middle ground (half the original k, not the most aggressive
+  # k=4 option) given adaptive_sampling above already concentrates points
+  # near the press, so even a smaller k still covers a meaningful local
+  # neighborhood there.
+  attn_k: 8
+  # Restored to match the other configs' batch_size=32 -- the earlier
+  # batch=8 was a memory workaround for k=16's cost; at k=8 the (B,N,N,...)
+  # intermediates are smaller and batch=32 fits the whole 48GB GPU
+  # comfortably (benchmarked: ~187ms/step at batch=32,k=8, ~4.5min/epoch
+  # estimated -- versus the original k=16/batch=8 setup's ~18.5min/epoch
+  # observed, over 4x faster end to end).
+  batch_size: 32
+  dropout: 0.1
+  gradient_clip: 1.0
+  latent_size: 128
+  loss: mse
+  model_type: forgenet
+  predict_temperature: true
+  temp_loss_weight: 1.0
+  optimizer:
+    base_learning_rate: 0.0001
+    min_learning_rate: 1.0e-07
+    weight_decay: 0.01
+  point_size: 4096
+  scheduler:
+    end_factor: 0.05
+    lr_decay_rate: 0.001
+    lr_decay_step: 1.0
+    start_factor: 1.0
+  use_gpu: true
+  use_res: false
+run:
+  early_stop: true
+  min_delta: 1.0e-06
+  num_epochs: 300
+  patience: 30
+  run_folder: /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/runs/forge_common_thermal_v2_60k_attention
+  run_name: forge_common_thermal_v2_60k_attention
+  save_every: 50

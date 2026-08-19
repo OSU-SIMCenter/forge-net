@@ -434,12 +434,19 @@ def visualize_vector_diff_w_scale(x_t, x_tp1, x_hat,
 
     return plotter
 
-def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat, 
-                                      loss_cont, mesh1=None, mesh2=None, 
-                                      scale_vectors=False, fig_path=None):
-    
+def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat,
+                                      loss_cont, mesh1=None, mesh2=None,
+                                      scale_vectors=False, scale_factor=0.5, fig_path=None):
+    """`scale_vectors`: `False` (default, unchanged) -- every arrow drawn at
+    the SAME fixed length (`scale_factor`), direction/color only.
+    `True` -- arrow LENGTH scales with actual displacement magnitude (times
+    `scale_factor`), so which points moved most is visible at a glance, not
+    just which direction/how much loss. Previously accepted but silently
+    ignored -- both glyph calls hardcoded `scale=False, factor=0.5`
+    regardless of what was passed in; fixed to actually wire both params
+    through."""
     plotter = pv.Plotter(shape=(1, 2), window_size=(2000,1000))  # 1 row, 2 columns
-    
+
     start = x_t
     direction = x_tp1 - x_t
     direction_hat = x_hat - x_t
@@ -448,13 +455,13 @@ def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat,
     points = pv.PolyData(start)
     points['vectors'] = direction
     points['loss'] = loss_cont
-    
+
     plotter.subplot(0, 0)
 
     arrows = points.glyph(
         orient='vectors',
-        scale=False,  # Don't scale by data
-        factor=0.5,   # Use fixed magnitude (same as before)
+        scale=scale_vectors,
+        factor=scale_factor,
         color_mode='vector',
         geom=pv.Arrow()
     )
@@ -481,8 +488,8 @@ def visualize_vector_diff_w_loss_cont(x_t, x_tp1, x_hat,
     arrows_hat = points_hat.glyph(
         orient='vectors',
         color_mode='vector',
-        scale=False,  # Don't scale by data
-        factor=0.5,   # Use fixed magnitude (same as before)
+        scale=scale_vectors,
+        factor=scale_factor,
         geom=pv.Arrow()
     )
     
@@ -636,29 +643,92 @@ def plot_loss(train_loss_list, test_loss_list, write_string, output_folder=None,
             plt.close()
 
 
-def plot_eval_series(all_stats_dict, 
-                     n_step=2, 
-                     max_cols=6, 
+def _real_mesh_wireframe_edges(vertices: np.ndarray, tetra: np.ndarray) -> np.ndarray:
+    """Real boundary-surface wireframe of a tet mesh, as an `(M, 2, 3)`
+    array of edge endpoint pairs -- `extract_surface().extract_all_edges()`,
+    NOT the full volumetric mesh's edges (confirmed elsewhere this session,
+    e.g. `demo_physforge_mesh_thermal_sampling.py`: the full tet mesh's
+    edges render as a near-solid, unreadable mass; the boundary surface's
+    edges alone give a genuine, legible wireframe)."""
+    import pyvista as pv
+
+    cells = np.hstack([np.full((len(tetra), 1), 4, dtype=np.int64), tetra.astype(np.int64)]).ravel()
+    celltypes = np.full(len(tetra), pv.CellType.TETRA)
+    grid = pv.UnstructuredGrid(cells, celltypes, vertices)
+    edges = grid.extract_surface().extract_all_edges()
+    lines = edges.lines.reshape(-1, 3)[:, 1:]  # (M, 2) point-index pairs
+    pts = edges.points
+    return pts[lines]  # (M, 2, 3)
+
+
+_TEMP_CLIM = (20.0, 1000.0)  # matches eval_thermal.py's _CLIM -- same fixed thermal range used throughout forge_common's own renders
+
+
+def plot_eval_series(all_stats_dict,
+                     n_step=2,
+                     max_cols=6,
                      mode='loss',
                      fill_variation=True,
                      add_mse=False,
                      add_chamfer=False,
                      add_hausdorff=False,
+                     add_temp=False,
+                     gt_mesh_vertices_per_step=None,
+                     gt_mesh_tetra=None,
                      fig_path=None):
     """
     3-Row Figure where the loss plot is truncated to match the final scatter plot step.
+
+    `gt_mesh_vertices_per_step`/`gt_mesh_tetra`: the REAL mesh (from the DB,
+    same connectivity every step -- cw_slab_model never remeshes) for the
+    series being scatter-plotted (the LAST one in `all_stats_dict`, see
+    below) -- `gt_mesh_vertices_per_step[k]` must align index-for-index with
+    `all_gt_steps[-1][k]` (both indexed by LOCAL pair position within that
+    series). When given, GT panels draw the mesh's REAL boundary wireframe
+    (`_real_mesh_wireframe_edges`) instead of a convex-hull approximation of
+    the sampled points -- the actual topology, not a guess at it.
+
+    `add_temp`: also colors EVERY point-cloud panel (GT included, not just
+    predictions) by the real per-point temperature (`_TEMP_CLIM`, same
+    fixed 20-1000C range/inferno colormap `eval_thermal.py`'s pyvista
+    renders already use) instead of leaving GT panels flat-colored -- with
+    one small shared colorbar in the figure's bottom-right corner.
     """
-    
-    def plot_pc(ax, data, color, title, s=10, alpha=1.0):
-        if data is None: return
-        ax.scatter(data[:,0], data[:,1], data[:,2], s=s, c=color, alpha=alpha)
+
+    def plot_pc(ax, data, color, title, s=0.5, alpha=1.0, colors=None, wireframe_edges=None, wireframe_alpha=0.33, vmin=None, vmax=None):
+        """`colors`: optional per-point array (actual temperature, when
+        `add_temp` is on) -- overrides the flat `color` via a colormap when
+        given. Returns the `scatter` mappable when `colors` was used (`None`
+        otherwise) so the caller can build ONE shared colorbar from it
+        rather than one per panel. `wireframe_edges`: optional `(M, 2, 3)`
+        real mesh edges (see `_real_mesh_wireframe_edges`) to overlay -- GT
+        panels only, when the caller has real mesh data for this step."""
+        if data is None: return None
+        if colors is not None:
+            scatter = ax.scatter(data[:,0], data[:,1], data[:,2], s=s, c=colors, cmap='inferno', alpha=alpha, vmin=vmin, vmax=vmax)
+        else:
+            scatter = None
+            ax.scatter(data[:,0], data[:,1], data[:,2], s=s, c=color, alpha=alpha)
+        if wireframe_edges is not None:
+            for edge in wireframe_edges:
+                ax.plot(edge[:, 0], edge[:, 1], edge[:, 2], color='gray', alpha=wireframe_alpha, linewidth=0.4)
         ax.set_title(title)
+        return scatter
+
+    def _wireframe_for_step(k):
+        if gt_mesh_vertices_per_step is None or k >= len(gt_mesh_vertices_per_step):
+            return None
+        return _real_mesh_wireframe_edges(gt_mesh_vertices_per_step[k], gt_mesh_tetra)
 
     # Only plotting scatters for the n'th sequence
     gt_seq = all_stats_dict['all_gt_steps'][-1]
     one_step_seq = all_stats_dict['all_one_step_preds'][-1]
     rec_step_seq = all_stats_dict['all_rec_step_preds'][-1]
-    
+    gt_temp_seq = all_stats_dict.get('all_gt_temps', [None])[-1] if add_temp else None
+    one_step_temp_seq = all_stats_dict.get('all_one_step_pred_temps', [None])[-1] if add_temp else None
+    rec_step_temp_seq = all_stats_dict.get('all_rec_step_pred_temps', [None])[-1] if add_temp else None
+    temp_scatter = None  # captured from the first colored panel, for the shared colorbar
+
     # --- 1. Determine Display Indices ---
     rec_indices = list(range(n_step - 1, len(rec_step_seq), n_step))
     display_rec_indices = rec_indices[:max_cols - 2] 
@@ -672,28 +742,59 @@ def plot_eval_series(all_stats_dict,
 
     gs = fig.add_gridspec(3, num_cols, height_ratios=[1.5, 1.5, 1.15])
 
-    # --- ROW 0: Ground Truth ---
+    # --- ROW 0: Ground Truth (real-mesh wireframe overlay when available) ---
     ax_gt0 = fig.add_subplot(gs[0:2, 0], projection='3d')
-    plot_pc(ax_gt0, gt_seq[0], 'black', "GT Start (Step 0)")
+    sc = plot_pc(
+        ax_gt0, gt_seq[0], 'black', "GT Start (Step 0)", wireframe_edges=_wireframe_for_step(0),
+        colors=gt_temp_seq[0] if gt_temp_seq is not None else None, vmin=_TEMP_CLIM[0], vmax=_TEMP_CLIM[1],
+    )
+    temp_scatter = temp_scatter or sc
 
     ax_gt1 = fig.add_subplot(gs[0, 1], projection='3d')
-    plot_pc(ax_gt1, gt_seq[1] if len(gt_seq) > 1 else gt_seq[0], 'grey', "GT Step 1")
+    gt1_idx = 1 if len(gt_seq) > 1 else 0
+    sc = plot_pc(
+        ax_gt1, gt_seq[gt1_idx], 'grey', "GT Step 1", wireframe_edges=_wireframe_for_step(gt1_idx),
+        colors=gt_temp_seq[gt1_idx] if gt_temp_seq is not None else None, vmin=_TEMP_CLIM[0], vmax=_TEMP_CLIM[1],
+    )
+    temp_scatter = temp_scatter or sc
 
     for i, idx in enumerate(display_rec_indices):
         ax = fig.add_subplot(gs[0, 2 + i], projection='3d')
         if idx < len(gt_seq):
-            plot_pc(ax, gt_seq[idx], 'grey', f"GT Step {idx + 1}")
+            sc = plot_pc(
+                ax, gt_seq[idx], 'grey', f"GT Step {idx + 1}", wireframe_edges=_wireframe_for_step(idx),
+                colors=gt_temp_seq[idx] if gt_temp_seq is not None else None, vmin=_TEMP_CLIM[0], vmax=_TEMP_CLIM[1],
+            )
+            temp_scatter = temp_scatter or sc
 
     # --- ROW 1: Model Predictions ---
     # ax_m0 = fig.add_subplot(gs[1, 0], projection='3d')
     # plot_pc(ax_m0, rec_step_seq[0], 'black', "Input (Step 0)")
 
     ax_m1 = fig.add_subplot(gs[1, 1], projection='3d')
-    plot_pc(ax_m1, rec_step_seq[1], 'blue', "Model Pred ($\hat{x}_1$)")
+    # Index 0, not 1: `gt_seq[1]` (the panel this is compared against) is the
+    # GT state AFTER hit 0 (gt_seq is indexed by "state BEFORE hit k", so
+    # gt_seq[1] == state after hit 0). `one_step_seq[0]`/`rec_step_seq[0]`
+    # are both the predicted state AFTER hit 0 (identical to each other at
+    # this first step, since the recursive rollout hasn't diverged from GT
+    # yet) -- so index 0 is the correct match, not 1. The old `rec_step_seq
+    # [1]` compared a state with 2 ACCUMULATED hits against 1-hit GT (a
+    # real bug, confirmed directly: true one-step MSE was ~0.0001 here vs.
+    # the ~55x-inflated 0.006 the buggy comparison produced), making a
+    # genuinely accurate one-step prediction look badly wrong.
+    sc = plot_pc(
+        ax_m1, one_step_seq[0], 'blue', "Model Pred ($\hat{x}_1$)",
+        colors=one_step_temp_seq[0] if one_step_temp_seq is not None else None, vmin=_TEMP_CLIM[0], vmax=_TEMP_CLIM[1],
+    )
+    temp_scatter = temp_scatter or sc
 
     for i, idx in enumerate(display_rec_indices):
         ax = fig.add_subplot(gs[1, 2 + i], projection='3d')
-        plot_pc(ax, rec_step_seq[idx], 'red', f"Recursive Pred Step {idx + 1}")
+        sc = plot_pc(
+            ax, rec_step_seq[idx], 'red', f"Recursive Pred Step {idx + 1}",
+            colors=rec_step_temp_seq[idx] if rec_step_temp_seq is not None else None, vmin=_TEMP_CLIM[0], vmax=_TEMP_CLIM[1],
+        )
+        temp_scatter = temp_scatter or sc
     
     # --- ROW 2: Truncated Loss Curve ---
     import math
@@ -820,8 +921,39 @@ def plot_eval_series(all_stats_dict,
         ax_hausdorff.set_ylabel('Mean Hausdorff Distance')
         ax_hausdorff.tick_params(axis='y', colors='green')
 
+    if add_temp:
+        # Same twinx() idiom as add_mse/add_chamfer/add_hausdorff above --
+        # temperature MAE (degrees C) lives on a totally different scale
+        # than position error (mm), so it needs its own axis, not a shared
+        # one. Both one-step (from real GT each step) and recursive
+        # (compounding) temperature error plotted, mirroring the position
+        # curves' one-step-vs-recursive split above.
+        one_step_temp_means = np.array(all_stats_dict['all_one_step_temp_dist_means'])[:, :last_step_idx]
+        rec_step_temp_means = np.array(all_stats_dict['all_rec_step_temp_dist_means'])[:, :last_step_idx]
+        one_step_temp_mean_means = np.mean(one_step_temp_means, axis=0)
+        rec_step_temp_mean_means = np.mean(rec_step_temp_means, axis=0)
 
-    plt.savefig(fig_path)
+        ax_temp = ax_loss.twinx()
+        ax_temp.plot(steps, one_step_temp_mean_means, label='Mean Single Step Temp Error',
+                     color='orange', marker='.', alpha=0.6, linestyle='dotted')
+        ax_temp.plot(steps, rec_step_temp_mean_means, label='Mean Recursive Temp Error',
+                     color='darkorange', marker='s', markersize=4, linewidth=2.0)
+        ax_temp.set_ylabel('Mean |Temperature Error| (C)')
+        ax_temp.tick_params(axis='y', colors='darkorange')
+        ax_temp.legend(loc='upper right')
+
+    if temp_scatter is not None:
+        # One small shared colorbar for every point-cloud panel above
+        # (GT and predictions alike) rather than one per panel -- figure-
+        # fraction coords, tucked into the bottom-right corner where the
+        # loss/error curve panel (row 2, only spanning l_col:u_col+1 of
+        # num_cols) leaves empty space, independent of num_cols.
+        cbar_ax = fig.add_axes([0.94, 0.06, 0.015, 0.20])
+        cbar = fig.colorbar(temp_scatter, cax=cbar_ax)
+        cbar.set_label('Temperature (C)', fontsize=8)
+        cbar_ax.tick_params(labelsize=7)
+
+    plt.savefig(fig_path, dpi=300)
 
 def render_deformation_frame(frame_data):
     """Worker function to render a single multi-view frame for either meshes or point clouds."""

@@ -1,6 +1,21 @@
+"""XL ForgeNet -- `model.py`'s exact architecture (residual-block PointNet,
+global-maxpool state/action encoders, no local attention -- the "old"
+design, deliberately not the `attention_model.py` variant) with every
+internal Dense width scaled up ~1.5x, landing at roughly double `model.py`'s
+361,284 params. NOT a uniform 2x width scale -- Dense-layer parameter count
+scales roughly with width^2 for a layer whose input AND output both grow
+(most of this stack), so a straight 2x width multiplier would have
+quadrupled params, not doubled them; 1.5x width was chosen empirically
+(instantiated + counted, see this file's own test) to land close to 2x
+total, not derived from a single global multiplier applied to model.py's
+config `latent_size` (most of model.py's widths are HARDCODED literals, not
+derived from `latent_size` at all, so changing that config value alone
+would barely move the total count)."""
+
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
+
 
 class ForgeNet(nn.Module):
     latent_size: int
@@ -11,27 +26,9 @@ class ForgeNet(nn.Module):
 
     @nn.compact
     def __call__(self, x_t: jax.Array, a_t: jax.Array, train: bool = True):
-        """
-        Forward pass for ForgeNet.
-
-        Args:
-            x_t: Point cloud input of shape (B, N, 3) -- or (B, N, 4) when
-                `predict_temperature=True` (xyz + current per-point temperature,
-                see dataloaders.py's `SingleStepMeshTransitionDataset` docstring;
-                the encoder/decoder Dense layers below don't hardcode the channel
-                count, so this needs no other change here).
-            a_t: Action input of shape (B, action_dims).
-            train: Boolean flag for BatchNorm and Dropout behavior.
-
-        Returns: `delta_xyz` (B, N, 3) if `predict_temperature=False` (unchanged,
-            original single-array return); `(delta_xyz, delta_temp)` -- `delta_temp`
-            (B, N, 1) -- if `predict_temperature=True`. A SEPARATE head (its own
-            `nn.Dense(1)` off the shared decoder features `d`), not a 4th channel
-            concatenated onto `delta_xyz`, specifically so position and
-            temperature predictions don't share one output layer's weight scale
-            -- keeps the two tasks' gradient magnitudes independent (see
-            `trainer.py`'s `_get_loss_fn` for the matching loss-side separation).
-        """
+        """Same `x_t`/`a_t`/return contract as `model.py`'s `ForgeNet` -- see
+        its `__call__` docstring. Only the internal widths differ (96/192/
+        384/768 in place of 64/128/256/512)."""
         B, N, C = x_t.shape
         half_latent = self.latent_size // 2
 
@@ -40,12 +37,12 @@ class ForgeNet(nn.Module):
         # ====================================================================
         # STATE ENCODER
         # ====================================================================
-        x = nn.Dense(64, kernel_init=he_init)(x_t)
+        x = nn.Dense(96, kernel_init=he_init)(x_t)
         x = nn.BatchNorm(use_running_average=not train)(x)
         x = nn.relu(x)
 
         identity1 = x
-        x = nn.Dense(64, kernel_init=he_init)(x)
+        x = nn.Dense(96, kernel_init=he_init)(x)
         x = nn.BatchNorm(use_running_average=not train)(x)
         x = nn.relu(x)
         if self.use_res:
@@ -53,10 +50,10 @@ class ForgeNet(nn.Module):
 
         identity2 = x
         if self.use_res:
-            identity2 = nn.Dense(128, kernel_init=he_init)(identity2)
+            identity2 = nn.Dense(192, kernel_init=he_init)(identity2)
             identity2 = nn.BatchNorm(use_running_average=not train)(identity2)
 
-        x = nn.Dense(128, kernel_init=he_init)(x)
+        x = nn.Dense(192, kernel_init=he_init)(x)
         x = nn.BatchNorm(use_running_average=not train)(x)
         x = nn.relu(x)
         if self.use_res:
@@ -64,10 +61,10 @@ class ForgeNet(nn.Module):
 
         identity3 = x
         if self.use_res:
-            identity3 = nn.Dense(256, kernel_init=he_init)(identity3)
+            identity3 = nn.Dense(384, kernel_init=he_init)(identity3)
             identity3 = nn.BatchNorm(use_running_average=not train)(identity3)
 
-        x = nn.Dense(256, kernel_init=he_init)(x)
+        x = nn.Dense(384, kernel_init=he_init)(x)
         x = nn.BatchNorm(use_running_average=not train)(x)
         x = nn.relu(x)
         if self.use_res:
@@ -77,22 +74,21 @@ class ForgeNet(nn.Module):
         x = nn.BatchNorm(use_running_average=not train)(x)
 
         # Global context: Max pooling over the N (points) dimension
-        x_l = jnp.max(x, axis=1) 
+        x_l = jnp.max(x, axis=1)
         x_l = nn.Dropout(self.dropout, deterministic=not train)(x_l)
 
         # ====================================================================
         # ACTION ENCODER
         # ====================================================================
-        # Ensure a_t is at least 2D: (B, action_dims)
         if a_t.ndim == 1:
             a_t = jnp.expand_dims(a_t, axis=1)
 
-        a = nn.Dense(64, kernel_init=he_init)(a_t)
+        a = nn.Dense(96, kernel_init=he_init)(a_t)
         a = nn.BatchNorm(use_running_average=not train)(a)
         a = nn.relu(a)
 
         act_identity1 = a
-        a = nn.Dense(64, kernel_init=he_init)(a)
+        a = nn.Dense(96, kernel_init=he_init)(a)
         a = nn.BatchNorm(use_running_average=not train)(a)
         a = nn.relu(a)
         if self.use_res:
@@ -100,10 +96,10 @@ class ForgeNet(nn.Module):
 
         act_identity2 = a
         if self.use_res:
-            act_identity2 = nn.Dense(128, kernel_init=he_init)(act_identity2)
+            act_identity2 = nn.Dense(192, kernel_init=he_init)(act_identity2)
             act_identity2 = nn.BatchNorm(use_running_average=not train)(act_identity2)
 
-        a = nn.Dense(128, kernel_init=he_init)(a)
+        a = nn.Dense(192, kernel_init=he_init)(a)
         a = nn.BatchNorm(use_running_average=not train)(a)
         a = nn.relu(a)
         if self.use_res:
@@ -111,59 +107,52 @@ class ForgeNet(nn.Module):
 
         act_identity3 = a
         if self.use_res:
-            act_identity3 = nn.Dense(256, kernel_init=he_init)(act_identity3)
+            act_identity3 = nn.Dense(384, kernel_init=he_init)(act_identity3)
             act_identity3 = nn.BatchNorm(use_running_average=not train)(act_identity3)
 
-        a = nn.Dense(256, kernel_init=he_init)(a)
+        a = nn.Dense(384, kernel_init=he_init)(a)
         a = nn.BatchNorm(use_running_average=not train)(a)
         a = nn.relu(a)
         if self.use_res:
             a = a + act_identity3
 
-        # Dropout applied before the final projection in your PyTorch code
         a = nn.Dropout(self.dropout, deterministic=not train)(a)
         a_l = nn.Dense(half_latent, kernel_init=he_init)(a)
 
         # ====================================================================
         # POINT-WISE DECODER
         # ====================================================================
-        # Combine global features: (B, half_latent * 2)
         global_latent = jnp.concatenate([x_l, a_l], axis=1)
-
-        # Expand global context across all points: (B, N, half_latent * 2)
         global_expanded = jnp.broadcast_to(
             jnp.expand_dims(global_latent, axis=1),
             (B, N, half_latent * 2)
         )
-
-        # Concatenate Global Context with Point Positions: (B, N, half_latent*2 + 3)
         combined_features = jnp.concatenate([global_expanded, x_t], axis=-1)
 
-        d = nn.Dense(512, kernel_init=he_init)(combined_features)
+        d = nn.Dense(768, kernel_init=he_init)(combined_features)
         d = nn.BatchNorm(use_running_average=not train)(d)
         d = nn.relu(d)
         d = nn.Dropout(self.dropout * 0.5, deterministic=not train)(d)
 
         dec_identity1 = d
         if self.use_res:
-            dec_identity1 = nn.Dense(128, kernel_init=he_init)(dec_identity1)
+            dec_identity1 = nn.Dense(192, kernel_init=he_init)(dec_identity1)
             dec_identity1 = nn.BatchNorm(use_running_average=not train)(dec_identity1)
 
-        d = nn.Dense(256, kernel_init=he_init)(d)
+        d = nn.Dense(384, kernel_init=he_init)(d)
         d = nn.BatchNorm(use_running_average=not train)(d)
         d = nn.relu(d)
 
-        d = nn.Dense(128, kernel_init=he_init)(d)
+        d = nn.Dense(192, kernel_init=he_init)(d)
         d = nn.BatchNorm(use_running_average=not train)(d)
         d = nn.relu(d)
         if self.use_res:
             d = d + dec_identity1
 
-        # Predict Point-wise Deltas
-        delta = nn.Dense(3, kernel_init=he_init)(d) # Final output is directly (B, N, 3)
+        delta = nn.Dense(3, kernel_init=he_init)(d)
 
         if self.predict_temperature:
-            delta_temp = nn.Dense(1, kernel_init=he_init)(d)  # SEPARATE head, see __call__ docstring
+            delta_temp = nn.Dense(1, kernel_init=he_init)(d)  # SEPARATE head, see model.py's matching docstring
             return delta, delta_temp
 
         return delta

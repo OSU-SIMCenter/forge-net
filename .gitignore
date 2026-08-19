@@ -216,3 +216,5 @@ __marimo__/
 # Large file types
 *.npz
 *.db
+*.pt
+*.mcap

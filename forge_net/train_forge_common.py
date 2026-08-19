@@ -36,23 +36,56 @@ def main():
     config["run"]["run_folder"] = run_folder
 
     make_dataset(config=config)
-    train_loader, test_loader = make_dataloaders(config)
+    train_loader, test_loader, loss_norm_stats = make_dataloaders(config)
+    if config["network"].get("predict_temperature", False):
+        # Data-driven normalization constants (see make_dataloaders'/
+        # ForgeNetTrainer's docstrings) -- computed fresh from THIS run's
+        # actual dataset, not hand-picked, so they always match whatever
+        # `--config` points at.
+        config["network"]["pos_delta_std"] = loss_norm_stats["pos_delta_std"]
+        config["network"]["temp_delta_std"] = loss_norm_stats["temp_delta_std"]
+        print(f"Loss normalization stats: {loss_norm_stats}")
     trainer = ForgeNetTrainer(config, train_loader, test_loader)
+
+    # Written HERE (before `trainer.train()`, which can run for hours) so
+    # the resolved config -- including anything `_make_network` fills in
+    # during `ForgeNetTrainer.__init__` itself, e.g. `point_size`, and the
+    # `pos_delta_std`/`temp_delta_std` normalization stats injected above --
+    # is available to read WHILE training is still running, not only after
+    # it finishes. Re-written again below once training completes, as a
+    # safety net in case anything changes later that isn't captured yet.
+    def _write_config_out():
+        out_config = dict(trainer.config)
+        out_config["run"] = dict(out_config["run"])
+        out_config["run"]["run_folder"] = str(run_folder)  # yaml cannot dump Path objects
+        with open(run_folder / "config_out.yml", "w") as f:
+            yaml.safe_dump(out_config, f)
+
+    _write_config_out()
     trainer.train()
+    _write_config_out()
 
     config = trainer.config  # get any changes the trainer made (e.g. point_size)
-    config["run"]["run_folder"] = str(run_folder)  # yaml cannot dump Path objects
-    with open(run_folder / "config_out.yml", "w") as f:
-        yaml.safe_dump(config, f)
 
-    evaluate(config, trainer)
-    evaluate_series(
-        config, trainer,
-        num_series=3, min_series_length=15,
-        max_cols=7, plot_mode="dist", n_step=3,
-        add_mse=True, add_chamfer=False, add_hausdorff=False,
-        plot_heatmaps=True, save_meshes=False,
-    )
+    if config["network"].get("predict_temperature", False):
+        # `evaluate`/`evaluate_series` call `trainer.predict(...)` and
+        # divide the raw result by 100.0 -- with `predict_temperature=True`
+        # that's now a `(delta_xyz, delta_temp)` tuple, an immediate
+        # TypeError (confirmed directly). Neither function knows about the
+        # temperature head at all. Skip them here; `eval_thermal.py` is the
+        # dedicated replacement for a `predict_temperature` run (mesh +
+        # point + prediction + error-over-time GIF).
+        print("predict_temperature=True -- skipping legacy evaluate()/evaluate_series() "
+              "(see forge_net/eval_thermal.py instead)")
+    else:
+        evaluate(config, trainer)
+        evaluate_series(
+            config, trainer,
+            num_series=3, min_series_length=15,
+            max_cols=7, plot_mode="dist", n_step=3,
+            add_mse=True, add_chamfer=False, add_hausdorff=False,
+            plot_heatmaps=True, save_meshes=False,
+        )
 
 
 if __name__ == "__main__":

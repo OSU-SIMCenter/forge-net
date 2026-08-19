@@ -54,6 +54,80 @@ def knn_points_simple_jax(
     return dists, idx
 
 
+def knn_points_k1_chunked_jax(
+    p1: jnp.ndarray,
+    p2: jnp.ndarray,
+    lengths1: Optional[jnp.ndarray] = None,
+    lengths2: Optional[jnp.ndarray] = None,
+    norm: int = 2,
+    chunk_size: int = 256,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Exact K=1 nearest-neighbor search, same result as
+    `knn_points_simple_jax(p1, p2, ..., K=1)` but computed via `jax.lax.scan`
+    over chunks of p2 instead of materializing the full (N, P1, P2) distance
+    matrix at once. Peak memory is O(N, P1, chunk_size) instead of
+    O(N, P1, P2) -- this is what lets n_search_points scale up (e.g. to
+    4096) without OOMing. Same total FLOPs as the dense version, just spread
+    over sequential chunks; not an approximation.
+
+    The scan body is wrapped in `jax.checkpoint` -- confirmed directly this
+    matters, not just theoretical: without it, `jax.lax.scan`'s default
+    reverse-mode AD (needed by `jacrev`/`grad` for CMA-MEGA's gradient
+    scoring) saves the per-chunk diff/dist residuals STACKED across every
+    chunk for the backward pass, which adds back up to ~dense-sized memory
+    (measured: chunk_size=1024 -> still OOM'd requesting 33GB, chunk_size=256
+    -> pathological multi-minute XLA compile that never finished). With
+    `jax.checkpoint`, the backward pass recomputes each chunk's forward
+    diff/dist instead of storing it -- trades some backward-pass FLOPs for
+    the peak-memory reduction that's the entire point of chunking here.
+    """
+    N, P1, D = p1.shape
+    P2 = p2.shape[1]
+
+    if lengths1 is None:
+        lengths1 = jnp.full((N,), P1, dtype=jnp.int32)
+    if lengths2 is None:
+        lengths2 = jnp.full((N,), P2, dtype=jnp.int32)
+
+    n_chunks = -(-P2 // chunk_size)  # ceil div
+    pad = n_chunks * chunk_size - P2
+    p2_padded = jnp.pad(p2, ((0, 0), (0, pad), (0, 0))) if pad > 0 else p2
+    # (n_chunks, N, chunk_size, D) so scan iterates over chunks
+    p2_chunks = p2_padded.reshape(N, n_chunks, chunk_size, D).transpose(1, 0, 2, 3)
+    offsets = jnp.arange(n_chunks) * chunk_size
+
+    @jax.checkpoint
+    def body(carry, xs):
+        best_dist, best_idx = carry
+        p2_chunk, offset = xs
+        diff = p1[:, :, None, :] - p2_chunk[:, None, :, :]
+        if norm == 2:
+            dist = jnp.sum(diff ** 2, axis=-1)
+        else:
+            dist = jnp.sum(jnp.abs(diff), axis=-1)
+
+        local_idx = jnp.arange(chunk_size)[None, None, :] + offset  # (1, 1, chunk)
+        valid = local_idx < lengths2[:, None, None]  # (N, 1, chunk)
+        dist = jnp.where(valid, dist, jnp.inf)
+
+        chunk_min = jnp.min(dist, axis=-1)  # (N, P1)
+        chunk_argmin = jnp.argmin(dist, axis=-1).astype(jnp.int32) + offset  # (N, P1)
+
+        improve = chunk_min < best_dist
+        best_dist = jnp.where(improve, chunk_min, best_dist)
+        best_idx = jnp.where(improve, chunk_argmin, best_idx)
+        return (best_dist, best_idx), None
+
+    init = (jnp.full((N, P1), jnp.inf, dtype=p1.dtype), jnp.zeros((N, P1), dtype=jnp.int32))
+    (best_dist, best_idx), _ = jax.lax.scan(body, init, (p2_chunks, offsets))
+
+    p1_mask = jnp.arange(P1)[None, :] >= lengths1[:, None]  # (N, P1)
+    best_dist = jnp.where(p1_mask, 0.0, best_dist)
+
+    # match knn_points_simple_jax's (N, P1, K) shape convention with K=1
+    return best_dist[..., None], best_idx[..., None]
+
+
 def knn_gather_jax(
     x: jnp.ndarray,
     idx: jnp.ndarray,
@@ -86,12 +160,16 @@ def cosine_similarity_jax(a: jnp.ndarray, b: jnp.ndarray, axis: int = -1, eps: f
 
 def _chamfer_single_direction_jax(
     x, y, x_lengths, y_lengths, x_normals, y_normals,
-    weights, point_reduction, norm, abs_cosine, return_displacements
+    weights, point_reduction, norm, abs_cosine, return_displacements,
+    chunk_size=None,
 ):
     return_normals = x_normals is not None and y_normals is not None
     N, P1, D = x.shape
 
-    dists, idx = knn_points_simple_jax(x, y, x_lengths, y_lengths, norm=norm, K=1)
+    if chunk_size is not None:
+        dists, idx = knn_points_k1_chunked_jax(x, y, x_lengths, y_lengths, norm=norm, chunk_size=chunk_size)
+    else:
+        dists, idx = knn_points_simple_jax(x, y, x_lengths, y_lengths, norm=norm, K=1)
     cham_x = dists[..., 0]
 
     disps = None
@@ -162,8 +240,9 @@ def chamfer_distance_jax(
     single_directional: bool = False,
     abs_cosine: bool = True,
     return_displacements: bool = False,
+    chunk_size: Optional[int] = None,
 ) -> ChamferResult:
-    
+
     if batch_reduction is not None and batch_reduction not in ("mean", "sum"):
         raise ValueError('batch_reduction must be "mean", "sum", or None')
     if point_reduction is not None and point_reduction not in ("mean", "sum", "max"):
@@ -183,7 +262,8 @@ def chamfer_distance_jax(
 
     cham_x, cham_norm_x, disps_x_to_y = _chamfer_single_direction_jax(
         x, y, x_lengths, y_lengths, x_normals, y_normals,
-        weights, point_reduction, norm, abs_cosine, return_displacements
+        weights, point_reduction, norm, abs_cosine, return_displacements,
+        chunk_size=chunk_size,
     )
 
     if single_directional:
@@ -200,7 +280,8 @@ def chamfer_distance_jax(
 
     cham_y, cham_norm_y, disps_y_to_x = _chamfer_single_direction_jax(
         y, x, y_lengths, x_lengths, y_normals, x_normals,
-        weights, point_reduction, norm, abs_cosine, return_displacements
+        weights, point_reduction, norm, abs_cosine, return_displacements,
+        chunk_size=chunk_size,
     )
 
     cham_x_w = cham_x * lambda_x_to_y

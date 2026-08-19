@@ -185,18 +185,28 @@ def update_barycentric_points_np(deformed_mesh: pv.PolyData, triangle_ids: np.ar
     
     return np.array(updated_points)
 
-def tetrahedral_barycentric_sampling(mesh: pv.UnstructuredGrid, 
-                                        num_points: int, tet_mask: np.ndarray = None, 
-                                        node_features: np.ndarray = None, seed: int = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def tetrahedral_barycentric_sampling(mesh: pv.UnstructuredGrid,
+                                        num_points: int, tet_mask: np.ndarray = None,
+                                        node_features: np.ndarray = None, seed: int = None,
+                                        tet_weights: np.ndarray = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     '''
     Returns sampled points inside a tetrahedral mesh and their barycentric information.
-    
+
     Args:
         mesh: Input pyvista UnstructuredGrid (pure tetrahedra)
         num_points: Number of points to sample
         tet_mask: Optional mask for tetrahedra to sample from
         seed: Random seed for reproducible sampling
-    
+        tet_weights: Optional (num_tetrahedra,) SOFT density multiplier (applied
+            AFTER `tet_mask`, so indexed against the already-masked tet list --
+            same length as `tet_mask.sum()` if both are given). Unlike `tet_mask`
+            (hard include/exclude), this scales each tet's volume-based sampling
+            probability, so a region can get MORE points without EXCLUDING the
+            rest of the mesh -- e.g. boundary-biased ("adaptive") sampling that
+            concentrates density near a press-contact region while still
+            covering the whole workpiece. `None` (default): uniform-by-volume,
+            unchanged from before this parameter existed.
+
     Returns:
         points: (N, 3) sampled point positions
         global_tet_ids: (N,) which tetrahedron each point belongs to (in original mesh indexing)
@@ -224,21 +234,31 @@ def tetrahedral_barycentric_sampling(mesh: pv.UnstructuredGrid,
         tetrahedra = tetrahedra[tet_mask]
         tet_volumes = tet_volumes[tet_mask]
         original_tet_indices = original_tet_indices[tet_mask]
-        
-    total_volume = np.sum(tet_volumes)
+
     num_tetrahedra = len(tet_volumes)
     assert num_tetrahedra > 0, "Tetrahedral mask is empty"
-    
-    # --- 1. Distribute points based on volume ---
+
+    # Sampling DENSITY per tet -- volume alone (uniform-by-volume, unchanged
+    # default) or volume * tet_weights (adaptive/boundary-biased -- see
+    # `tet_weights`'s docstring). Barycentric math below is UNAFFECTED
+    # either way -- weighting only changes which tets get MORE points, not
+    # where within a chosen tet a point lands.
+    sampling_density = tet_volumes if tet_weights is None else tet_volumes * tet_weights
+    total_density = np.sum(sampling_density)
+
+    # --- 1. Distribute points based on sampling_density ---
     # Vectorized equivalent of the nested floor loop
-    counts = np.floor((tet_volumes / total_volume) * num_points).astype(int)
+    counts = np.floor((sampling_density / total_density) * num_points).astype(int)
     point_tet_ids = np.repeat(np.arange(num_tetrahedra), counts).tolist()
-    
-    # Assign remaining points randomly
+
+    # Assign remaining points randomly, same density weighting as above (not
+    # plain-uniform-over-tet-count) so a small `adaptive_sampling` boost
+    # isn't diluted by an unweighted remainder draw.
     remainder = num_points - len(point_tet_ids)
     if remainder > 0:
-        point_tet_ids.extend(rng.randint(0, num_tetrahedra, size=remainder))
-        
+        remainder_probs = sampling_density / total_density
+        point_tet_ids.extend(rng.choice(num_tetrahedra, size=remainder, p=remainder_probs))
+
     point_tet_ids = np.array(point_tet_ids)
     
     # --- 2. Compute 3D Barycentric Coordinates ---
@@ -358,6 +378,36 @@ def update_tetrahedral_barycentric_points(
             updated_features = (b0_vec * f0) + (b1_vec * f1) + (b2_vec * f2) + (b3_vec * f3)
             
     return updated_points, updated_features
+
+def tet_mask_from_window(vertices: np.ndarray, tetra: np.ndarray, center: float, window_length: float, bc_length: float = 0.0) -> np.ndarray:
+    '''
+    Tetrahedral analog of `triangle_mask_from_window` (same axial-window
+    formula, tet centroids instead of triangle centroids) -- for `process_
+    data_forge_common.py`'s per-hit axial "z windowing" (`_boundary_
+    sampling_weights`'s SOFT density boost has a hard-window counterpart
+    here: only tets within the window are sampled AT ALL, so the network
+    never sees material far from the current strike's axial position and
+    doesn't need `z` as an explicit action input -- the same idea `phi`
+    canonicalization already applies to the angular DOF, applied to the
+    axial one instead).
+
+    Args:
+        vertices: (V, 3) mesh vertex positions
+        tetra: (T, 4) int tet vertex indices
+        center: axial (X) position of the window's center, mm
+        window_length: full width of the window, mm
+        bc_length: additional width beyond the window (boundary-condition
+            context), mm
+
+    Returns:
+        Boolean array of shape (T,) indicating which tets fall in the window
+    '''
+    tet_centroids_x = np.mean(vertices[tetra, 0], axis=1)
+    half_span = window_length / 2 + bc_length / 2
+    lower_bound = center - half_span
+    upper_bound = center + half_span
+    return (tet_centroids_x >= lower_bound) & (tet_centroids_x <= upper_bound)
+
 
 def triangle_mask_from_window(mesh: pv.PolyData, center: float, window_length: float, bc_length: float = 0.0) -> np.ndarray:
     '''

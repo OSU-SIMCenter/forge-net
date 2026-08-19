@@ -1,0 +1,48 @@
+databases:
+  db1: "unused_data_out_already_exists"
+  db2: "unused_data_out_already_exists"
+  lines: 1
+
+datasets:
+  points_per_state: 4096
+  mask_points: false
+  seed: 42
+  canonical_frame: false
+  data_out: "/local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/slab_deep_extreme_v5_4k/slab_dataset.npz"
+
+network:
+  arch: "large" # same architecture/dataset composition as slab_deep_extreme_v5_9k_large, but at n_points=4096
+    # (not 9000) and regenerated with the tool-width bug fixed: generate_forgenet_slab_dataset.py's
+    # `tool = real_press_flat_die()` silently used the DEFAULT axial_width_mm (15.82mm, Tool2_clip's full
+    # mounting-shank extent) instead of `die_contact_axial_width_mm()` (13.48mm, the tapered CONTACT-tip width
+    # that cw_slab_model/tuning's fitted beta/plastic-kernel params -- and every real-physics search script --
+    # actually use). Confirmed directly this caused ForgeNet to systematically overpredict axial elongation
+    # (22-37% too much final span vs. slab/ ground truth across 3 targets) when replaying CMA-MEGA-found hit
+    # sequences. This dataset/checkpoint has the fix; slab_deep_extreme_v5_9k_large and slab_deep_extreme_v5_small
+    # do not.
+  use_res: true # required key for arch=="large" (trainer.py reads it via direct dict access, not .get)
+  loss: "mse"
+  batch_size: 256
+  latent_size: 512
+  action_features: ["steps", "positions", "rotations_norm"]
+  action_dims: 3
+  gradient_clip: 1.0
+  optimizer:
+    base_learning_rate: 5.0e-4
+    min_learning_rate: 1.0e-5
+    weight_decay: 1.0e-2
+  dropout: 0.1
+  use_gpu: true
+
+run:
+  run_name: "slab_deep_extreme_v5_4k_large_toolfix"
+  save_every: 20
+  run_folder: ???
+  early_stop: False
+  patience: 250
+  min_delta: 1.0e-6
+  num_epochs: 500
+
+eval:
+  eval_idxs: [1, 25, 115]
+  min_series_length: 5

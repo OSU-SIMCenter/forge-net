@@ -1,0 +1,98 @@
+databases:
+  db_path: /local/scratch/groves/forge_common/data/forge_common_thermal_60k.db
+  sequence_types:
+  - cogging
+  source_sims:
+  - cw_slab_model
+datasets:
+  # NEW npz, distinct from the (adaptive-sampling-only) attention dataset --
+  # center_hit_z below shifts the actual sampled point COORDINATES (a
+  # translation, not a crop -- see that field's comment), so it needs its
+  # own build.
+  # `_fixedseed` suffix: distinct .npz from the (per-pair-independently-
+  # sampled) earlier build -- see `per_pair_seed: false` below.
+  data_out: /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/data/datasets/cw_slab_model_cogging_thermal_60k_xl_centered_fixedseed.npz
+  seed: 0
+  total_points: 4096
+  adaptive_sampling: true
+  adaptive_sampling_scale_mm: 10.0
+  adaptive_sampling_boost: 4.0
+  # Per-hit axial TRANSLATION (process_data_forge_common.py's canon_pos,
+  # `[-hit.z, 0, 0]`) -- every pair's coords_t/coords_tp1 shifted so THIS
+  # hit's own z always lands at x=0, the exact same idea per-hit phi
+  # canonicalization already applies to the angular DOF. Deliberately NOT
+  # window_sampling (a hard crop) -- that would exclude far-field material
+  # and sever the coupling between the localized plastic zone near the
+  # press and the surrounding rigid-body/elastic response the global-
+  # maxpool branch needs to see the WHOLE point cloud to track. This is
+  # what lets `z` be dropped from action_features below.
+  center_hit_z: true
+  # FALSE ("fixed sampling"): reuse the same literal `seed` for every pair
+  # instead of independently sampling each one. The per-pair-independent
+  # version (process_data_forge_common.py's `_pair_seed`) breaks point
+  # CORRESPONDENCE across a pair boundary -- pair i's coords_tp1 and pair
+  # i+1's coords_t represent the same real mesh state but end up as two
+  # separately-drawn point clouds, which (combined with adaptive_sampling
+  # concentrating each pair's sample around ITS OWN hit location) produced
+  # a spurious ~26mm "jump" in eval_thermal.py's rollout error at every
+  # pair boundary -- confirmed via direct diagnostic to be a sampling
+  # artifact, not a real frame-transform bug or model error. Keep this
+  # False for practice/eval runs; flip to True (more diverse per-pair
+  # training signal) once the rollout comparison is made correspondence-
+  # safe (e.g. compare against the real DB mesh instead of a fresh sample).
+  per_pair_seed: false
+eval:
+  eval_idxs:
+  - 0
+  - 5000
+  - 15000
+  - 25000
+  - 40000
+network:
+  action_dims: 2
+  # z DROPPED (implicit via center_hit_z above, see datasets: comment) --
+  # action space is now exactly displacement (rho) + duration, matching the
+  # "v1 got down to just a scalar [+ duration]" design discussed earlier.
+  # phi already dropped via canonicalization, same as the canon/attention
+  # configs.
+  action_features:
+  - rho
+  - duration
+  arch: xl
+  batch_size: 32
+  dropout: 0.1
+  gradient_clip: 1.0
+  # xl_model.py's ForgeNet -- model.py's exact architecture (residual-block
+  # PointNet, global-maxpool encoders, no local attention) with internal
+  # Dense widths scaled ~1.5x (96/192/384/768 in place of 64/128/256/512).
+  # Empirically verified: 732,260 total params at latent_size=128 vs the
+  # "large" arch's 361,284 -- ~2.03x, matching the "double the weights"
+  # target (a straight 2x WIDTH multiplier would have ~quadrupled params,
+  # not doubled them, since most Dense layers here have both input and
+  # output scaling together).
+  latent_size: 128
+  loss: mse
+  model_type: forgenet
+  predict_temperature: true
+  temp_loss_weight: 1.0
+  optimizer:
+    base_learning_rate: 0.0001
+    min_learning_rate: 1.0e-07
+    weight_decay: 0.01
+  point_size: 4096
+  scheduler:
+    end_factor: 0.05
+    lr_decay_rate: 0.001
+    lr_decay_step: 1.0
+    start_factor: 1.0
+  use_gpu: true
+  # Matches the canon run's explicit choice (user: "no res layers needed").
+  use_res: false
+run:
+  early_stop: true
+  min_delta: 1.0e-06
+  num_epochs: 300
+  patience: 30
+  run_folder: /local/scratch/groves/jax-forgeRL/models/forge-net/forge_net/runs/forge_common_thermal_v2_60k_xl
+  run_name: forge_common_thermal_v2_60k_xl
+  save_every: 50

@@ -18,6 +18,7 @@ class ForgeNet(nn.Module):
     latent_size: int
     action_dims: int
     dropout: float = 0.3
+    predict_temperature: bool = False
 
     @nn.compact
     def __call__(self, x_t: jax.Array, a_t: jax.Array, train: bool = True):
@@ -76,5 +77,9 @@ class ForgeNet(nn.Module):
         d = nn.relu(d)
 
         delta = nn.Dense(3, kernel_init=he_init)(d)
+
+        if self.predict_temperature:
+            delta_temp = nn.Dense(1, kernel_init=he_init)(d)  # SEPARATE head, see model.py's matching docstring
+            return delta, delta_temp
 
         return delta
