@@ -62,6 +62,7 @@ import matplotlib
 import numpy as np
 import pyvista as pv
 import yaml
+from scipy.spatial import cKDTree
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -137,6 +138,70 @@ def _load_real_series_meshes(db_path: str, series_id: str):
     return vertices_per_step, temps_per_step, tetra
 
 
+def _chamfer_mean_distance_mm(a: np.ndarray, b: np.ndarray) -> float:
+    """Symmetric mean nearest-neighbor Euclidean distance (mm) between two
+    point clouds -- `mean(dist(a[i], nearest b)) + mean(dist(b[j], nearest
+    a))) / 2`, via `scipy.spatial.cKDTree` (small N=4096, called at most a
+    few hundred times for a full `--eval-series` run -- no need for the
+    batched/differentiable machinery `forge_net.loss.chamfer_jax` provides
+    for TRAINING; this is eval-only, numpy is simpler and plenty fast here).
+
+    Deliberately POINT-CLOUD to POINT-CLOUD, not mesh-based (no LSQR/
+    barycentric mesh reconstruction involved) -- point-for-point INDEX
+    correspondence only holds WITHIN a single pair's own `coords_t`/
+    `coords_tp1` (`update_tetrahedral_barycentric_points` guarantees it
+    there); a RECURSIVE rollout's tracked points and any LATER pair's own
+    freshly-sampled ground truth are two independently-sampled point sets
+    of the same continuous shape with no index correspondence at all, so
+    comparing them element-wise measures "how far apart are two
+    essentially-random points" (tens of mm, roughly constant step to step)
+    rather than genuine model error -- confirmed directly this session (a
+    pure ground-truth-only frame hop, no model involved, showed a small
+    ~1.5mm nearest-neighbor gap between independently-sampled points on the
+    SAME physical shape vs. a large, misleading ~10-20mm element-wise one).
+    Nearest-neighbor matching is invariant to which specific points got
+    sampled, so it measures actual shape/position discrepancy instead. A
+    mesh-based ground truth (LSQR reconstruction, or re-evaluating a fixed
+    tet_id/barycentric-coords pair against a later mesh) was considered and
+    rejected: it doesn't generalize to simulators that DO remesh (jax_forge/
+    Agility_Forge_data), and it would fold the mesh-reconstruction solver's
+    OWN error into what's supposed to be a measurement of ForgeNet's
+    prediction error specifically."""
+    dist_a_to_b, _ = cKDTree(b).query(a)
+    dist_b_to_a, _ = cKDTree(a).query(b)
+    return float((dist_a_to_b.mean() + dist_b_to_a.mean()) / 2.0)
+
+
+def _chamfer_temp_error_array(
+    pred_xyz: np.ndarray, pred_temp: np.ndarray, gt_xyz: np.ndarray, gt_temp: np.ndarray,
+) -> np.ndarray:
+    """Per-point `|temperature error|` (degrees C) using the SAME
+    nearest-neighbor-by-POSITION correspondence as `_chamfer_dist_array`,
+    not a fresh temperature-space match (which wouldn't mean anything --
+    "nearest temperature" isn't a meaningful correspondence). Temperature
+    has the identical cross-pair-boundary index-mismatch problem position
+    does (see `_chamfer_mean_distance_mm`'s docstring) -- `pred_temp[i]`
+    tracks the same material point `pred_xyz[i]` does, so once positions
+    are correctly nearest-neighbor-matched, looking up THAT matched ground-
+    truth point's own temperature is the correct, physically meaningful
+    comparison."""
+    _, nearest_idx = cKDTree(gt_xyz).query(pred_xyz)
+    return np.abs(pred_temp - gt_temp[nearest_idx])
+
+
+def _chamfer_dist_array(pred: np.ndarray, gt: np.ndarray) -> np.ndarray:
+    """Per-point nearest-neighbor distance, `pred[i] -> nearest gt point`
+    (mm) -- single-directional chamfer (unlike `_chamfer_mean_distance_mm`'s
+    symmetric scalar), used where a PER-POINT array is needed for
+    downstream std/95th-percentile stats, not just a mean. Single-
+    directional (precision-style: "how far is each of my predicted points
+    from the true shape") rather than symmetric, to keep it directly
+    analogous to the element-wise `norm(pred - gt, axis=-1)` array it
+    replaces (same length as `pred`, one distance per predicted point)."""
+    dist, _ = cKDTree(gt).query(pred)
+    return dist
+
+
 def _rollout_series(
     trainer: ForgeNetTrainer, coords: np.ndarray, temps: np.ndarray, actions: np.ndarray,
     quats: np.ndarray, positions: np.ndarray,
@@ -175,15 +240,29 @@ def _rollout_series(
             what makes this correct for a `center_hit_z=True` dataset, not
             just the rotation-only (`center_hit_z=False`) ones.
 
-    Returns `(pred_coords, pred_temps)`, both `(n_steps+1, ...)`, ALL WORLD
-    FRAME (unlike `coords`/`temps` above) -- needed downstream for LSQR
-    reconstruction against the real world-frame base mesh and so the
-    mesh-view panel lines up with the real (world-frame, straight from the
-    DB) ground-truth mesh. Index 0 equals the real ground-truth start
-    (world-framed via `untransform_points_np`, nothing to predict there)."""
+    Returns `(pred_coords, pred_temps, pred_coords_local)`. `pred_coords`/
+    `pred_temps` are `(n_steps+1, ...)`, ALL WORLD FRAME (unlike `coords`/
+    `temps` above) -- needed downstream for LSQR reconstruction against the
+    real world-frame base mesh and so the mesh-view panel lines up with the
+    real (world-frame, straight from the DB) ground-truth mesh. Index 0
+    equals the real ground-truth start (world-framed via `untransform_
+    points_np`, nothing to predict there).
+
+    `pred_coords_local[i+1]` is the RAW model output BEFORE the untransform
+    to world frame -- i.e. already in pair `i`'s own canonical frame, the
+    SAME frame `coords[i+1]` (pair i's own coords_tp1) already lives in with
+    NO transform needed. For error computation this is preferred over
+    `norm(pred_coords - coords_world)`: mathematically a shared rigid
+    transform cancels out of both a difference and a norm, so the two
+    SHOULD be identical, but comparing directly in canonical frame removes
+    the untransform/transform round-trip from the error's dependency chain
+    entirely -- one less place a frame-indexing mistake could ever hide.
+    `pred_coords_local[0] = coords[0]` trivially (the real ground-truth
+    seed, no prediction, no transform)."""
     n_steps = actions.shape[0]
 
     pred_coords = [untransform_points_np(coords[0], quats[0], positions[0])]
+    pred_coords_local = [coords[0]]
     pred_temps = [temps[0]]
 
     x_t = jnp.concatenate([jnp.asarray(coords[0]), jnp.asarray(temps[0])[:, None]], axis=-1)[None, ...]  # (1, N, 4), pair-i's own frame
@@ -192,6 +271,7 @@ def _rollout_series(
         delta_xyz_hat, delta_temp_hat = trainer.predict(x_t, a_t)
         x_next_xyz_local = x_t[0, :, :3] + delta_xyz_hat[0] / 100.0
         x_next_temp = x_t[0, :, 3] + delta_temp_hat[0, :, 0]
+        pred_coords_local.append(np.asarray(x_next_xyz_local))
 
         x_next_xyz_world = untransform_points(x_next_xyz_local, jnp.asarray(quats[i]), jnp.asarray(positions[i]))
         pred_coords.append(np.asarray(x_next_xyz_world))
@@ -201,7 +281,7 @@ def _rollout_series(
             x_next_xyz_local_next = transform_points(x_next_xyz_world, jnp.asarray(quats[i + 1]), jnp.asarray(positions[i + 1]))
             x_t = jnp.concatenate([x_next_xyz_local_next, x_next_temp[:, None]], axis=-1)[None, ...]
 
-    return np.stack(pred_coords), np.stack(pred_temps)
+    return np.stack(pred_coords), np.stack(pred_temps), np.stack(pred_coords_local)
 
 
 def _render_mesh_panel(pl, row, col, mesh_points, mesh_tetra, mesh_temps, bounds, title):
@@ -302,20 +382,39 @@ def render_series_thermal_gif(
     # an earlier version of this function.
     positions = data["positions"][start:start + length]
 
-    pred_coords, pred_temps = _rollout_series(trainer, coords, temps, actions, quats, positions)
+    pred_coords, pred_temps, pred_coords_local = _rollout_series(trainer, coords, temps, actions, quats, positions)
 
     # `coords`/`temps` above are each pair's OWN canonical frame (pair i's
     # `coords_t`/`coords_tp1` share ONE frame with each other, not with
     # pair i-1/i+1's) -- world-frame them the same way `_rollout_series`
     # world-frames its output, so `coords_world`/`pred_coords` (world frame)
     # are directly comparable and consistent with the real (world-frame)
-    # ground-truth mesh used below.
+    # ground-truth mesh used below for the VISUAL point-cloud panels.
     coords_world = [untransform_points_np(coords[0], quats[0], positions[0])]
     coords_world += [untransform_points_np(coords[i], quats[i - 1], positions[i - 1]) for i in range(1, len(coords))]
     coords_world = np.stack(coords_world)
 
-    geom_errors = np.mean(np.linalg.norm(pred_coords - coords_world, axis=-1), axis=-1)  # (n_steps+1,), mm
-    temp_errors = np.mean(np.abs(pred_temps - temps), axis=-1)  # (n_steps+1,), degrees C
+    # Error metric: ELEMENT-WISE (in canonical frame -- `pred_coords_local`
+    # vs `coords`, both pair-i's-own-frame, no transform involved) for step
+    # 1 only, where index correspondence is real (`x_t` starts as literally
+    # `coords[0]`, and `coords[0]`/`coords[1]` are the SAME pair's own
+    # coords_t/coords_tp1, index-matched by construction). CHAMFER
+    # (nearest-neighbor, point-cloud to point-cloud, see
+    # `_chamfer_mean_distance_mm`) for every step after -- `pred_coords`'s
+    # tracked points and `coords[i]`'s (i>=2) freshly, independently
+    # sampled ground truth have no index correspondence at all past the
+    # first pair boundary, so an element-wise comparison there was
+    # measuring "distance between two essentially-random points on the
+    # same shape" (tens of mm) rather than genuine prediction error.
+    geom_errors = np.zeros(len(coords))
+    temp_errors = np.zeros(len(coords))
+    geom_errors[1] = float(np.mean(np.linalg.norm(pred_coords_local[1] - coords[1], axis=-1)))
+    temp_errors[1] = float(np.mean(np.abs(pred_temps[1] - temps[1])))
+    for i in range(2, len(coords)):
+        geom_errors[i] = _chamfer_mean_distance_mm(pred_coords[i], coords_world[i])
+        # Same nearest-neighbor-by-position correspondence as geom_errors[i]
+        # above -- see _chamfer_temp_error_array's docstring.
+        temp_errors[i] = float(np.mean(_chamfer_temp_error_array(pred_coords[i], pred_temps[i], coords_world[i], temps[i])))
 
     # REAL recorded mesh, straight from the DB, for the ground-truth "mesh view".
     gt_points_real, gt_temps_real, tetra = _load_real_series_meshes(config["databases"]["db_path"], series_id)
@@ -590,8 +689,21 @@ def evaluate_series_thermal(
             series_stats_dict["one_step_dist_95pct_means"].append(np.mean(one_step_95_arr))
             series_stats_dict["one_step_dist_95pct_stds"].append(np.std(one_step_95_arr))
 
-            rec_step_sq_diff = (x_rec_np - x_tp1_gt_np) ** 2
-            rec_step_dist_arr = np.linalg.norm(x_rec_np - x_tp1_gt_np, axis=-1)
+            if idx == series_start_idx:
+                # x_recursive_jax started as THIS pair's own real coords_t
+                # (below the loop) -- x_rec_np and x_tp1_gt_np have real
+                # index correspondence, same reasoning as one_step above.
+                rec_step_dist_arr = np.linalg.norm(x_rec_np - x_tp1_gt_np, axis=-1)
+            else:
+                # x_rec_np tracks material points carried forward from an
+                # EARLIER pair's own sample -- x_tp1_gt_np is THIS pair's
+                # own freshly, independently sampled ground truth, no index
+                # correspondence at all -- see _chamfer_mean_distance_mm's
+                # docstring for why element-wise here was measuring
+                # "distance between two essentially-random points," not
+                # genuine prediction error.
+                rec_step_dist_arr = _chamfer_dist_array(x_rec_np, x_tp1_gt_np)
+            rec_step_sq_diff = rec_step_dist_arr ** 2
             rec_step_95pct = np.percentile(rec_step_dist_arr, 95)
             rec_step_95_arr = rec_step_dist_arr[rec_step_dist_arr >= rec_step_95pct]
 
@@ -603,7 +715,16 @@ def evaluate_series_thermal(
 
             # --- Temperature stats (NEW -- absolute error, not a vector norm) ---
             one_step_temp_err_arr = np.abs(temp_tp1_hat_np - temp_tp1_gt_np)
-            rec_step_temp_err_arr = np.abs(temp_rec_np - temp_tp1_gt_np)
+            if idx == series_start_idx:
+                rec_step_temp_err_arr = np.abs(temp_rec_np - temp_tp1_gt_np)
+            else:
+                # Same nearest-neighbor-by-position correspondence as
+                # rec_step_dist_arr above (rigid-transform-invariant, so
+                # doing this in LOCAL frame here -- x_rec_np/x_tp1_gt_np,
+                # no world-framing needed -- gives the same matching a
+                # world-frame version would) -- see
+                # _chamfer_temp_error_array's docstring.
+                rec_step_temp_err_arr = _chamfer_temp_error_array(x_rec_np, temp_rec_np, x_tp1_gt_np, temp_tp1_gt_np)
             series_stats_dict["one_step_temp_dist_means"].append(np.mean(one_step_temp_err_arr))
             series_stats_dict["rec_step_temp_dist_means"].append(np.mean(rec_step_temp_err_arr))
             series_stats_dict["one_step_temp_errors"].append(one_step_temp_err_arr)
